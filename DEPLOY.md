@@ -95,12 +95,30 @@ read-only filesystem: a `file:` database would be wiped between requests and
 lost on every deploy. A hosted Postgres is required — Vercel Postgres, Neon or
 Supabase all work, since `prisma/schema.prisma` already targets `postgresql`.
 
-Environment variables (Project → Settings → Environment Variables):
+The connection string does **not** have to be called `DATABASE_URL`. Vercel's
+Postgres integration lets you choose the variable prefix, so the same database
+may arrive as `POSTGRES_URL`, `STORAGE_URL`, `STORAGE_PRISMA_URL` and so on —
+and Prisma, which only ever reads `DATABASE_URL`, then reports it as "an empty
+string" on a database that is provisioned and healthy.
+
+`scripts/vercel-build.mjs` and `src/core/db/database-url.ts` resolve it at build
+time and at runtime, in this order:
+
+```
+DATABASE_URL → POSTGRES_PRISMA_URL → STORAGE_PRISMA_URL
+             → POSTGRES_URL_NON_POOLING → STORAGE_URL_NON_POOLING
+             → DATABASE_URL_UNPOOLED → POSTGRES_URL → STORAGE_URL
+```
+
+Migrations separately prefer a direct (non-pooled) URL — `DIRECT_URL`, or any
+`*_NON_POOLING` variant — because the advisory locks they take are commonly
+refused through a pooler.
+
+So attaching the database is usually enough. The only variables you must add by
+hand are:
 
 | Name | Value |
 |---|---|
-| `DATABASE_URL` | the pooled Postgres connection string |
-| `DIRECT_URL` | direct (non-pooled) URL, if the provider gives one — needed for migrations |
 | `AUTH_SECRET` | `openssl rand -base64 32` |
 | `AUTH_TRUST_HOST` | `true` |
 
