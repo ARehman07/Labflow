@@ -1,0 +1,14 @@
+{
+  "name": "LabFlow — Lab Information System",
+  "short_name": "LabFlow",
+  "description": "Self-hosted diagnostic lab management: bookings, results, billing and reports.",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f766e",
+  "theme_color": "#0d9488",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

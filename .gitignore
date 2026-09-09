@@ -1,0 +1,14 @@
+node_modules
+.next
+.env
+.env*.local
+# Backups of env files hold real secrets too — .env alone does not cover them.
+.env*.bak
+.env.*
+!.env.example
+*.log
+dist
+coverage
+prisma/*.db
+*.tsbuildinfo
+next-env.d.ts.timestamp

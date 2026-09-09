@@ -1,0 +1,999 @@
+// LabFlow database schema — see docs/02-database-and-er.md
+// PostgreSQL + Prisma. Phase 0 defines the full model; later phases add logic.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+enum Sex {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum AgeUnit {
+  YEARS
+  MONTHS
+  DAYS
+}
+
+enum RangeSex {
+  ANY
+  MALE
+  FEMALE
+}
+
+enum ParamValueType {
+  NUMBER
+  TEXT
+  OPTION
+  CALCULATED
+}
+
+enum ResultFlag {
+  NORMAL
+  HIGH
+  LOW
+  CRITICAL
+}
+
+/// The workflow pipeline states (docs/03). A test moves through these.
+enum OrderLineStatus {
+  BOOKED
+  SAMPLE_COLLECTED
+  SAMPLE_DISPATCHED
+  SAMPLE_RECEIVED
+  IN_PROGRESS
+  RESULT_SAVED
+  APPROVED
+  PRINTED
+  DELIVERED
+  RETAKE
+  CANCELLED
+}
+
+enum VisitStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
+enum PartnerDirection {
+  INWARD
+  OUTWARD
+}
+
+/// Which rule produced the discount on an invoice. Recorded so a bill can be
+/// explained months later, and so revenue given away is attributable.
+/// How a card member relates to the card holder.
+///
+/// A card is a family benefit, so who someone IS to the holder is the thing
+/// that justifies the discount. Without it, six slots are just six strangers
+/// and reception has nothing to check against at the counter.
+enum Relation {
+  SELF
+  SPOUSE
+  SON
+  DAUGHTER
+  FATHER
+  MOTHER
+  BROTHER
+  SISTER
+  OTHER
+}
+
+enum DiscountSource {
+  NONE
+  MANUAL_FIXED
+  MANUAL_PERCENT
+  FAMILY_CARD
+  DOCTOR
+}
+
+enum InvoiceStatus {
+  DUE
+  PARTIAL
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  ONLINE
+}
+
+enum DeliveryChannel {
+  PRINT
+  EMAIL
+  WHATSAPP
+  PORTAL
+}
+
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+enum CommissionStatus {
+  ACCRUED
+  PAID
+}
+
+enum LedgerType {
+  INCOME
+  EXPENSE
+}
+
+/// How a manual ledger entry moved. Only CASH touches the till, which is what
+/// makes a real "cash you should have in the drawer" figure possible.
+enum LedgerMethod {
+  CASH
+  BANK
+  CARD
+}
+
+enum SpecimenType {
+  BLOOD
+  SERUM
+  PLASMA
+  URINE
+  STOOL
+  SWAB
+  OTHER
+}
+
+enum TokenStatus {
+  WAITING
+  CALLED
+  DONE
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tenancy — one row per laboratory. Every scoped table carries tenantId,
+// injected by the Prisma extension in src/core/db/tenant.ts.
+// ─────────────────────────────────────────────────────────────
+model Tenant {
+  id       String  @id @default(cuid())
+  code     String  @unique // entered at login, e.g. "arfagma"
+  name     String
+  isActive Boolean @default(true)
+
+  // ── Policy, set by the superadmin. Staff apply these; they cannot edit them.
+  /// Flat discount for family-card holders, as a percentage.
+  familyCardDiscountPct Decimal @default(0) @db.Decimal(5, 2)
+  /// Maximum people on one family card, including the primary holder.
+  familyCardMemberCap   Int     @default(6)
+  /// One-off joining fee charged when a card is issued. Never discounted.
+  familyCardFee         Decimal @default(0) @db.Decimal(10, 2)
+  /// Whether the card's discount applies to the very slip on which it is
+  /// issued. True sells the card at the counter ("pay 300, save 270 today");
+  /// false makes the benefit start from the next visit.
+  familyCardDiscountOnIssue Boolean @default(true)
+  /// When false, the user who saved a result may not verify it.
+  allowSelfVerify       Boolean @default(false)
+
+  // ── Letterhead. What a patient sees on paper is the lab, not the software.
+  /// Logo as a data URL. Held inline rather than in object storage: a lab logo
+  /// is a few kilobytes, changes once a year, and must render on a printout
+  /// even when the network does not.
+  logoDataUrl      String? @db.Text
+  /// Sits under the lab name, e.g. "Diagnostic & Research Laboratory".
+  tagline          String?
+  /// Registration or licence number, printed on every report.
+  licenseNo        String?
+  email            String?
+  /// Replaces the default disclaimer at the foot of a report.
+  reportFooterNote String?
+
+  branches              Branch[]
+  roles                 Role[]
+  users                 User[]
+  patients              Patient[]
+  doctors               Doctor[]
+  partnerLabs           PartnerLab[]
+  departments           Department[]
+  testGroups            TestGroup[]
+  tests                 Test[]
+  testPrices            TestPrice[]
+  testParameters        TestParameter[]
+  referenceRanges       ReferenceRange[]
+  parameterFormulas     ParameterFormula[]
+  visits                Visit[]
+  samples               Sample[]
+  orderLines            OrderLine[]
+  resultValues          ResultValue[]
+  workflowEvents        WorkflowEvent[]
+  invoices              Invoice[]
+  payments              Payment[]
+  refunds               Refund[]
+  commissions           Commission[]
+  ledgerEntries         LedgerEntry[]
+  reportTemplates       ReportTemplate[]
+  reports               Report[]
+  deliveries            Delivery[]
+  queueTokens           QueueToken[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+  criticalNotifications CriticalNotification[]
+  notifiableConditions  NotifiableCondition[]
+  notifiableReports     NotifiableReport[]
+  familyCards           FamilyCard[]
+  portalOtps            PortalOtp[]
+  portalSessions        PortalSession[]
+  familyCardMembers     FamilyCardMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// Core / Admin
+// ─────────────────────────────────────────────────────────────
+model Branch {
+  id       String  @id @default(cuid())
+  tenantId String
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  address  String?
+  phone    String?
+  isActive Boolean @default(true)
+
+  users     User[]
+  visits    Visit[]
+  templates ReportTemplate[]
+  prices    TestPrice[]
+  ledger    LedgerEntry[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  users       User[]
+  permissions RolePermission[]
+  createdAt   DateTime         @default(now())
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Permission {
+  id    String           @id @default(cuid())
+  code  String           @unique // e.g. "result.approve"
+  label String
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model User {
+  id           String  @id @default(cuid())
+  tenantId     String
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fullName     String
+  username     String
+  passwordHash String
+  isActive     Boolean @default(true)
+  /// Reachable on the floor; not used for login.
+  phone        String?
+  /// Set when an owner issues or resets a password. The user is held on the
+  /// change-password screen until they clear it, so an owner-chosen password is
+  /// never a password anyone keeps using.
+  mustChangePassword Boolean @default(false)
+  lastLoginAt        DateTime?
+
+  roleId   String
+  role     Role    @relation(fields: [roleId], references: [id])
+  branchId String?
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
+  createdVisits    Visit[]                @relation("VisitCreatedBy")
+  collectedSamples Sample[]               @relation("SampleCollectedBy")
+  enteredResults   ResultValue[]          @relation("ResultEnteredBy")
+  approvedResults  ResultValue[]          @relation("ResultApprovedBy")
+  criticalCalls    CriticalNotification[] @relation("CriticalNotifiedBy")
+  notifiableFlags  NotifiableReport[]     @relation("NotifiableFlaggedBy")
+  issuedCards      FamilyCard[]           @relation("FamilyCardIssuedBy")
+  workflowEvents   WorkflowEvent[]
+  auditLogs        AuditLog[]
+  notifications    Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, username])
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// People
+// ─────────────────────────────────────────────────────────────
+model Patient {
+  id          String    @id @default(cuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mrNo        String
+  fullName    String
+  /// Authoritative when known. Age is derived from it.
+  dateOfBirth DateTime?
+  /// Age as entered, when no date of birth is available.
+  age         Int?
+  ageUnit     AgeUnit   @default(YEARS)
+  sex         Sex?
+  mobile      String?
+  address     String?
+
+  visits          Visit[]
+  primaryOfCards  FamilyCard[]       @relation("FamilyCardPrimary")
+  cardMemberships FamilyCardMember[] @relation("FamilyCardMembership")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, mrNo])
+  @@index([mobile])
+  @@index([fullName])
+  @@index([tenantId])
+}
+
+model Doctor {
+  id            String  @id @default(cuid())
+  tenantId      String
+  tenant        Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name          String
+  clinic        String?
+  /// What the doctor EARNS on referred work.
+  commissionPct Decimal @default(0) @db.Decimal(5, 2)
+  /// What the doctor's patients SAVE. A different number entirely — conflating
+  /// the two silently gives away the commission rate as a discount.
+  patientDiscountPct Decimal @default(0) @db.Decimal(5, 2)
+  isActive      Boolean @default(true)
+
+  visits      Visit[]
+  commissions Commission[]
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model PartnerLab {
+  id        String           @id @default(cuid())
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  direction PartnerDirection
+  phone     String?
+  isActive  Boolean          @default(true)
+
+  visits Visit[]
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Test catalog
+// ─────────────────────────────────────────────────────────────
+model Department {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  tests    Test[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model TestGroup {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name     String
+  tests    Test[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Test {
+  id           String       @id @default(cuid())
+  tenantId     String
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  code         String
+  departmentId String
+  department   Department   @relation(fields: [departmentId], references: [id])
+  groupId      String?
+  group        TestGroup?   @relation(fields: [groupId], references: [id])
+  tatHours     Int          @default(24)
+  specimenType SpecimenType @default(BLOOD)
+  isActive     Boolean      @default(true)
+
+  parameters TestParameter[]
+  prices     TestPrice[]
+  orderLines OrderLine[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model TestPrice {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  testId        String
+  test          Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id])
+  price         Decimal  @db.Decimal(10, 2)
+  effectiveFrom DateTime @default(now())
+
+  @@unique([testId, branchId, effectiveFrom])
+  @@index([tenantId])
+}
+
+model TestParameter {
+  id        String         @id @default(cuid())
+  tenantId  String
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  testId    String
+  test      Test           @relation(fields: [testId], references: [id], onDelete: Cascade)
+  name      String
+  code      String // referenced by formulas within the same test
+  unit      String? // NULL for ratios/unitless — fixes xMed's mg/dl-on-ratio bug
+  valueType ParamValueType @default(NUMBER)
+  options   String? // for OPTION type: comma-separated choices
+  sortOrder Int            @default(0)
+  isBold    Boolean        @default(false)
+
+  referenceRanges ReferenceRange[]
+  formula         ParameterFormula?
+  results         ResultValue[]
+
+  @@unique([testId, code])
+  @@index([tenantId])
+}
+
+model ReferenceRange {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parameterId  String
+  parameter    TestParameter @relation(fields: [parameterId], references: [id], onDelete: Cascade)
+  sex          RangeSex      @default(ANY)
+  /// Age bands are stored in DAYS so newborns, infants and adults compare
+  /// with one operator. 43800 days ≈ 120 years.
+  ageMinDays   Int           @default(0)
+  ageMaxDays   Int           @default(43800)
+  low          Decimal?      @db.Decimal(12, 4)
+  high         Decimal?      @db.Decimal(12, 4)
+  /// Panic thresholds. Outside these the result is CRITICAL and a callback
+  /// record is opened — see CriticalNotification.
+  criticalLow  Decimal?      @db.Decimal(12, 4)
+  criticalHigh Decimal?      @db.Decimal(12, 4)
+  displayText  String? // textual ranges (e.g. ACR bands) shown on the report
+
+  @@index([tenantId])
+}
+
+model ParameterFormula {
+  id          String        @id @default(cuid())
+  tenantId    String
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parameterId String        @unique
+  parameter   TestParameter @relation(fields: [parameterId], references: [id], onDelete: Cascade)
+  expression  String // e.g. "total - hdl - (tg/5)" — evaluated in a safe sandbox
+  inputs      String // JSON array (text) of parameter codes referenced, for validation
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Visit / Order / Results
+// ─────────────────────────────────────────────────────────────
+model Visit {
+  id           String      @id @default(cuid())
+  tenantId     String
+  tenant       Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  slipNo       String
+  b2bNo        String?
+  patientId    String
+  patient      Patient     @relation(fields: [patientId], references: [id])
+  branchId     String
+  branch       Branch      @relation(fields: [branchId], references: [id])
+  doctorId     String?
+  doctor       Doctor?     @relation(fields: [doctorId], references: [id])
+  partnerLabId String?
+  partnerLab   PartnerLab? @relation(fields: [partnerLabId], references: [id])
+  createdById  String
+  createdBy    User        @relation("VisitCreatedBy", fields: [createdById], references: [id])
+  status       VisitStatus @default(OPEN)
+  bookedAt     DateTime    @default(now())
+
+  orderLines  OrderLine[]
+  samples     Sample[]
+  invoice     Invoice?
+  reports     Report[]
+  commissions Commission[]
+  token       QueueToken?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, slipNo])
+  @@index([bookedAt])
+  @@index([tenantId])
+}
+
+model Sample {
+  id            String       @id @default(cuid())
+  tenantId      String
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  visitId       String
+  visit         Visit        @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  barcode       String
+  specimenType  SpecimenType
+  collectedAt   DateTime?
+  collectedById String?
+  collectedBy   User?        @relation("SampleCollectedBy", fields: [collectedById], references: [id])
+
+  orderLines OrderLine[]
+
+  @@unique([tenantId, barcode])
+  @@index([tenantId])
+}
+
+model OrderLine {
+  id       String          @id @default(cuid())
+  tenantId String
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  visitId  String
+  visit    Visit           @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  testId   String
+  test     Test            @relation(fields: [testId], references: [id])
+  status   OrderLineStatus @default(BOOKED)
+  sampleId String?
+  sample   Sample?         @relation(fields: [sampleId], references: [id])
+  dueAt    DateTime? // SLA computed from test.tatHours
+
+  results        ResultValue[]
+  workflowEvents WorkflowEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([tenantId])
+}
+
+model ResultValue {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orderLineId  String
+  orderLine    OrderLine     @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  parameterId  String
+  parameter    TestParameter @relation(fields: [parameterId], references: [id])
+  value        String? // raw display value (text or number as entered)
+  numericValue Decimal?      @db.Decimal(14, 4)
+  flag         ResultFlag    @default(NORMAL)
+  isCalculated Boolean       @default(false)
+
+  enteredById          String?
+  enteredBy            User?                 @relation("ResultEnteredBy", fields: [enteredById], references: [id])
+  approvedById         String?
+  approvedBy           User?                 @relation("ResultApprovedBy", fields: [approvedById], references: [id])
+  approvedAt           DateTime?
+  criticalNotification CriticalNotification?
+  notifiableReports    NotifiableReport[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderLineId, parameterId])
+  @@index([tenantId])
+}
+
+model WorkflowEvent {
+  id          String           @id @default(cuid())
+  tenantId    String
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orderLineId String
+  orderLine   OrderLine        @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  fromState   OrderLineStatus?
+  toState     OrderLineStatus
+  actorId     String
+  actor       User             @relation(fields: [actorId], references: [id])
+  note        String?
+  at          DateTime         @default(now())
+
+  @@index([orderLineId])
+  @@index([tenantId])
+}
+
+/// A critical result is not communicated until a human has been told.
+/// One row is opened automatically whenever a result flags CRITICAL; it stays
+/// open (notifiedAt IS NULL) until somebody records the call. ISO 15189 asks
+/// for exactly this.
+model CriticalNotification {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  resultValueId String      @unique
+  resultValue   ResultValue @relation(fields: [resultValueId], references: [id], onDelete: Cascade)
+
+  notifiedById  String?
+  notifiedBy    User?     @relation("CriticalNotifiedBy", fields: [notifiedById], references: [id])
+  notifiedTo    String? // who was actually reached
+  notifiedPhone String?
+  method        String? // phone / whatsapp / in person
+  notifiedAt    DateTime?
+
+  acknowledgedBy String? // their name, in their words
+  acknowledgedAt DateTime?
+  notes          String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, notifiedAt])
+  @@index([tenantId])
+}
+
+/// Conditions the lab is legally obliged to report to a health authority.
+/// Seeded per lab from the national notifiable-disease list.
+model NotifiableCondition {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  code      String // SNOMED or the authority's own code
+  name      String
+  authority String?
+  isActive  Boolean @default(true)
+
+  reports NotifiableReport[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+/// One reportable finding. Open (reportedAt IS NULL) until it is filed.
+model NotifiableReport {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  resultValueId String
+  resultValue   ResultValue         @relation(fields: [resultValueId], references: [id], onDelete: Cascade)
+  conditionId   String
+  condition     NotifiableCondition @relation(fields: [conditionId], references: [id])
+
+  flaggedById String?
+  flaggedBy   User?    @relation("NotifiableFlaggedBy", fields: [flaggedById], references: [id])
+  flaggedAt   DateTime @default(now())
+
+  reportedAt  DateTime?
+  reportedTo  String?
+  referenceNo String?
+  notes       String?
+
+  @@unique([resultValueId, conditionId])
+  @@index([tenantId, reportedAt])
+  @@index([tenantId])
+}
+
+/// A family discount card, held against a mobile number.
+///
+/// The mobile number IS the card — there is no separate card number to lose.
+/// The rate is snapshotted at issue so a later change to the lab's policy does
+/// not silently rewrite what past holders were promised.
+model FamilyCard {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// The card's identity. One card per number, per lab.
+  mobile String
+
+  primaryPatientId String
+  primaryPatient   Patient @relation("FamilyCardPrimary", fields: [primaryPatientId], references: [id])
+
+  /// Snapshot of Tenant.familyCardDiscountPct at the moment of issue.
+  discountPct Decimal @default(0) @db.Decimal(5, 2)
+  /// Joining fee charged for this card, snapshotted at issue.
+  feeAmount   Decimal @default(0) @db.Decimal(10, 2)
+  /// Snapshot of Tenant.familyCardMemberCap. Superadmin may change the policy
+  /// later; existing cards keep the capacity they were sold.
+  memberCap   Int     @default(6)
+
+  isActive  Boolean   @default(true)
+  issuedAt  DateTime  @default(now())
+  expiresAt DateTime?
+
+  issuedById String?
+  issuedBy   User?   @relation("FamilyCardIssuedBy", fields: [issuedById], references: [id])
+
+  members FamilyCardMember[]
+  Invoice Invoice[]
+
+  @@unique([tenantId, mobile])
+  @@index([tenantId])
+}
+
+/// Membership of a family card. Rows are kept after removal (removedAt set)
+/// so a past discount can still be explained.
+model FamilyCardMember {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  cardId String
+  card   FamilyCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  patientId String
+  patient   Patient @relation("FamilyCardMembership", fields: [patientId], references: [id])
+
+  /// Relation to the card holder. The holder themselves is SELF.
+  relation Relation @default(OTHER)
+
+  addedAt   DateTime  @default(now())
+  removedAt DateTime?
+
+  @@unique([cardId, patientId])
+  @@index([tenantId])
+  @@index([patientId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Billing / Finance
+// ─────────────────────────────────────────────────────────────
+model Invoice {
+  id             String         @id @default(cuid())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  visitId        String         @unique
+  visit          Visit          @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  grossAmount    Decimal        @db.Decimal(12, 2)
+  discount       Decimal        @default(0) @db.Decimal(12, 2)
+  /// Which rule produced the discount, and the card if one applied.
+  discountSource DiscountSource @default(NONE)
+  familyCardId   String?
+  familyCard     FamilyCard?    @relation(fields: [familyCardId], references: [id])
+  /// Family-card joining fee charged on this slip. Added AFTER the discount —
+  /// the fee is never discounted.
+  familyCardFee  Decimal        @default(0) @db.Decimal(10, 2)
+  netAmount      Decimal        @db.Decimal(12, 2)
+  paidAmount     Decimal        @default(0) @db.Decimal(12, 2)
+  status         InvoiceStatus  @default(DUE)
+
+  payments Payment[]
+  refunds  Refund[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  tenantId     String
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId    String
+  invoice      Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount       Decimal       @db.Decimal(12, 2)
+  method       PaymentMethod @default(CASH)
+  receivedById String
+  at           DateTime      @default(now())
+
+  @@index([tenantId])
+}
+
+model Refund {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId    String
+  invoice      Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  amount       Decimal  @db.Decimal(12, 2)
+  reason       String?
+  approvedById String
+  at           DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Commission {
+  id       String           @id @default(cuid())
+  tenantId String
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  doctorId String
+  doctor   Doctor           @relation(fields: [doctorId], references: [id])
+  visitId  String
+  visit    Visit            @relation(fields: [visitId], references: [id])
+  amount   Decimal          @db.Decimal(12, 2)
+  status   CommissionStatus @default(ACCRUED)
+  at       DateTime         @default(now())
+
+  @@index([tenantId])
+}
+
+model LedgerEntry {
+  id       String     @id @default(cuid())
+  tenantId String
+  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId String
+  branch   Branch     @relation(fields: [branchId], references: [id])
+  type     LedgerType
+  method   LedgerMethod @default(CASH)
+  category String
+  amount   Decimal    @db.Decimal(12, 2)
+  note     String?
+  at       DateTime   @default(now())
+
+  @@index([at])
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Reporting / Delivery
+// ─────────────────────────────────────────────────────────────
+model ReportTemplate {
+  id           String  @id @default(cuid())
+  tenantId     String
+  tenant       Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId     String
+  branch       Branch  @relation(fields: [branchId], references: [id])
+  name         String
+  headerHtml   String?
+  footerHtml   String?
+  signatureImg String?
+
+  reports Report[]
+
+  @@index([tenantId])
+}
+
+model Report {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  visitId     String
+  visit       Visit           @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  templateId  String?
+  template    ReportTemplate? @relation(fields: [templateId], references: [id])
+  publicToken String          @unique // random, expiring — safe shareable link
+  tokenExpiry DateTime?
+  generatedAt DateTime        @default(now())
+
+  deliveries Delivery[]
+
+  @@index([tenantId])
+}
+
+model Delivery {
+  id       String          @id @default(cuid())
+  tenantId String
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reportId String
+  report   Report          @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  channel  DeliveryChannel
+  status   DeliveryStatus  @default(QUEUED)
+  at       DateTime        @default(now())
+
+  @@index([tenantId])
+}
+
+/// A one-time code issued to a patient's mobile for portal access.
+///
+/// Stored hashed: a 6-digit code is trivially reversible from a plain-text
+/// database, and this table is a prime target. Attempts and a send cooldown
+/// live here too, so limits survive a restart and hold across instances —
+/// an in-memory Map gives neither.
+model PortalOtp {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  mobile   String
+  codeHash String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+  /// Sends in the current hour, for rate limiting.
+  sendCount Int      @default(1)
+  lastSentAt DateTime @default(now())
+  windowStartedAt DateTime @default(now())
+
+  @@unique([tenantId, mobile])
+  @@index([tenantId])
+}
+
+/// A short-lived portal session. The token is stored hashed — possessing the
+/// database must not grant the ability to impersonate a patient.
+model PortalSession {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  tokenHash String   @unique
+  mobile    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Queue / Notifications / Audit
+// ─────────────────────────────────────────────────────────────
+model QueueToken {
+  id       String      @id @default(cuid())
+  tenantId String
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  visitId  String      @unique
+  visit    Visit       @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  number   Int
+  status   TokenStatus @default(WAITING)
+  at       DateTime    @default(now())
+
+  @@index([tenantId])
+}
+
+model Notification {
+  id       String   @id @default(cuid())
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message  String
+  isRead   Boolean  @default(false)
+  at       DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model AuditLog {
+  id       String   @id @default(cuid())
+  tenantId String
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actorId  String?
+  actor    User?    @relation(fields: [actorId], references: [id])
+  entity   String
+  entityId String
+  action   String
+  before   Json?
+  after    Json?
+  at       DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([at])
+  @@index([tenantId])
+}

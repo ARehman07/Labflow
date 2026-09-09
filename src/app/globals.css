@@ -1,0 +1,456 @@
+@import 'tailwindcss';
+
+/* Class-based dark mode: the toggle sets .dark on <html>, so a user's choice
+   beats the OS setting. System preference is applied by the boot script in
+   layout.tsx, which also prevents a flash of the wrong theme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Design tokens (CSS-first, single source of truth) ──
+   SEMANTIC tokens below (surface, line, body, muted…) are the ones components
+   should use. They are plain CSS variables, so redefining them under .dark
+   re-themes every utility built on them — no dark: variant needed at each
+   call site. Raw palette values (slate-500 and friends) do not do that, which
+   is why they were swept out of the components. */
+@theme {
+  /* Semantic surfaces */
+  --color-canvas: #f6f7fb;
+  --color-surface: #ffffff;
+  --color-surface-2: #f8fafc;
+  --color-surface-3: #f1f5f9;
+  --color-surface-inset: #f8fafc;
+
+  /* Semantic lines */
+  --color-line: #e2e8f0;
+  --color-line-strong: #cbd5e1;
+
+  /* Semantic text */
+  --color-strong: #0f172a;
+  --color-body: #334155;
+  --color-muted: #64748b;
+  --color-subtle: #94a3b8;
+
+  /* Semantic feedback — soft fill + readable text, both themes */
+  --color-danger-soft: #fef2f2;
+  --color-danger-line: #fecaca;
+  --color-danger-text: #b91c1c;
+  --color-warn-soft: #fffbeb;
+  --color-warn-line: #fde68a;
+  --color-warn-text: #92400e;
+  --color-ok-soft: #ecfdf5;
+  --color-ok-line: #a7f3d0;
+  --color-ok-text: #065f46;
+  --color-info-soft: #eff6ff;
+  --color-info-line: #bfdbfe;
+  --color-info-text: #1d4ed8;
+
+  /* Brand — indigo / iris (LabFlow Nova) */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-brand: #4f46e5;
+  --color-brand-dark: #4338ca;
+
+  /* Dark chrome (sidebar + top bar) */
+  --color-ink: #0b0f1a;
+  --color-ink-2: #111726;
+  --color-ink-line: #1f2637;
+  --color-ink-muted: #8b93a7;
+
+  /* Secondary accent — cyan (for data / highlights) */
+  --color-clinic-50: #ecfeff;
+  --color-clinic-100: #cffafe;
+  --color-clinic-500: #06b6d4;
+  --color-clinic-600: #0891b2;
+  --color-clinic-700: #0e7490;
+
+  /* Workflow status tokens */
+  --color-status-booked: #64748b;
+  --color-status-collected: #2563eb;
+  --color-status-progress: #d97706;
+  --color-status-saved: #7c3aed;
+  --color-status-approved: #16a34a;
+  --color-status-delivered: #0d9488;
+  --color-status-alert: #dc2626;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-urdu: 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+
+  /* Radius */
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  /* Shadows */
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+  --shadow-card-hover: 0 12px 28px -8px rgb(30 27 75 / 0.16), 0 2px 8px -2px rgb(30 27 75 / 0.08);
+  --shadow-dropdown: 0 12px 32px -8px rgb(15 23 42 / 0.22), 0 4px 12px -4px rgb(15 23 42 / 0.12);
+  --shadow-glow: 0 0 0 4px rgb(99 102 241 / 0.14);
+
+  /* Animations */
+  --animate-fade-in: fade-in 0.25s ease-out;
+  --animate-fade-in-up: fade-in-up 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-scale-in: scale-in 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-slide-in-right: slide-in-right 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-pulse-soft: pulse-soft 1.8s ease-in-out infinite;
+  --animate-nav-progress: nav-progress 2.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* The loading bar sits on top of the Topbar's static keyline, which is also a
+   thin brand gradient at the very top of the viewport. It has to look like a
+   different object, so it is taller, solid, and carries a glow that the static
+   line does not. */
+.nav-progress-bar {
+  background: linear-gradient(90deg,
+    var(--color-brand-500) 0%,
+    var(--color-clinic-400, #22d3ee) 60%,
+    #ffffff 100%);
+  border-end-end-radius: 9999px;
+  border-start-end-radius: 9999px;
+  box-shadow: 0 0 12px 2px color-mix(in srgb, var(--color-brand-500) 70%, transparent);
+}
+
+/* Eases toward the end without ever claiming to be finished — the bar
+   completes only when the route actually arrives. */
+@keyframes nav-progress {
+  0%   { transform: scaleX(0.02); }
+  40%  { transform: scaleX(0.45); }
+  75%  { transform: scaleX(0.75); }
+  100% { transform: scaleX(0.9); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* v3-compat: default border & ring colour to slate-200 (v4 defaults to currentColor) */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop {
+    border-color: var(--color-line, currentColor);
+  }
+}
+
+:root {
+  color-scheme: light;
+}
+
+/* ── Dark theme ──
+   Only the semantic variables are redefined. Surfaces lift as they stack
+   (canvas → surface → surface-2) rather than getting darker, which is how
+   depth reads on a dark UI; borders stay low-contrast so the grid recedes and
+   the data comes forward. Feedback colours use desaturated fills with light
+   text, because the light-mode pastels vibrate badly on dark. */
+.dark {
+  color-scheme: dark;
+
+  --color-canvas: #0a0e17;
+  --color-surface: #121826;
+  --color-surface-2: #182032;
+  --color-surface-3: #1e293f;
+  --color-surface-inset: #0d121d;
+
+  --color-line: #232c40;
+  --color-line-strong: #33405c;
+
+  --color-strong: #f1f5f9;
+  --color-body: #cbd5e1;
+  --color-muted: #94a3b8;
+  --color-subtle: #64748b;
+
+  --color-danger-soft: #2a1416;
+  --color-danger-line: #7f1d1d;
+  --color-danger-text: #fca5a5;
+  --color-warn-soft: #2a1f0d;
+  --color-warn-line: #78350f;
+  --color-warn-text: #fcd34d;
+  --color-ok-soft: #0c2119;
+  --color-ok-line: #065f46;
+  --color-ok-text: #6ee7b7;
+  --color-info-soft: #101c33;
+  --color-info-line: #1e3a8a;
+  --color-info-text: #93c5fd;
+
+  /* Indigo at 600 is too heavy on a dark ground; step up for contrast. */
+  --color-brand: #818cf8;
+  --color-brand-dark: #6366f1;
+
+  /* The chrome is already dark in light mode — separate it from the canvas
+     so the sidebar does not merge into the page. */
+  --color-ink: #070a12;
+  --color-ink-2: #0d1220;
+  --color-ink-line: #1b2334;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  /* Always reserve the scrollbar gutter so switching between short/long views
+     doesn't shift the layout horizontally. */
+  scrollbar-gutter: stable;
+}
+
+body {
+  @apply text-body antialiased;
+  font-size: 15px;
+  background:
+    radial-gradient(1100px 560px at 100% -8%, rgba(99, 102, 241, 0.07), transparent 60%),
+    radial-gradient(820px 480px at -8% 8%, rgba(6, 182, 212, 0.05), transparent 55%),
+    var(--color-canvas);
+  background-attachment: fixed;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* The ambient glow is too strong on dark — it greys out the blacks. */
+.dark body {
+  background:
+    radial-gradient(1100px 560px at 100% -8%, rgba(99, 102, 241, 0.10), transparent 60%),
+    radial-gradient(820px 480px at -8% 8%, rgba(6, 182, 212, 0.06), transparent 55%),
+    var(--color-canvas);
+  background-attachment: fixed;
+}
+
+/* Refined focus ring across the app.
+ *
+ * MUST live in @layer base. Unlayered CSS outranks anything in a cascade
+ * layer, and Tailwind emits utilities into @layer utilities — so while this
+ * rule sat outside a layer, no `focus-visible:ring-0` could ever override it.
+ * A composite control that draws its own ring on a wrapper then got a second
+ * ring painted on the inner input, with no way to switch it off. */
+@layer base {
+  *:focus-visible {
+    outline: none;
+    @apply ring-2 ring-brand-500/60 ring-offset-1;
+    --tw-ring-offset-color: var(--color-canvas);
+  }
+}
+
+/* Slim, modern scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--color-line-strong); border-radius: 9999px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card transition-shadow duration-300;
+  }
+  .card-hover {
+    @apply transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover;
+  }
+  .field {
+    @apply w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-body
+      placeholder:text-subtle transition-all duration-200
+      focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10;
+  }
+  .field:disabled {
+    @apply cursor-not-allowed bg-surface-2 text-muted;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-body;
+  }
+  /* Native selects and date inputs render their own controls; force those to
+     follow the theme rather than the OS default. */
+  select.field,
+  input[type='date'].field,
+  input[type='time'].field {
+    color-scheme: inherit;
+  }
+  .pill {
+    @apply inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1
+      text-xs font-semibold leading-none;
+  }
+  .section-title {
+    @apply text-sm font-semibold uppercase tracking-wide text-muted;
+  }
+  /* Feedback blocks — one class each, correct in both themes. */
+  .note-danger {
+    @apply rounded-xl border border-danger-line bg-danger-soft px-3 py-2 text-sm text-danger-text;
+  }
+  .note-warn {
+    @apply rounded-xl border border-warn-line bg-warn-soft px-3 py-2 text-sm text-warn-text;
+  }
+  .note-ok {
+    @apply rounded-xl border border-ok-line bg-ok-soft px-3 py-2 text-sm text-ok-text;
+  }
+  .note-info {
+    @apply rounded-xl border border-info-line bg-info-soft px-3 py-2 text-sm text-info-text;
+  }
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-surface-3;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.5), transparent);
+    animation: shimmer 1.5s infinite;
+  }
+}
+
+.dark .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.06), transparent);
+}
+
+/* Staggered list entrance */
+.stagger > * {
+  animation: fade-in-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.1s; }
+.stagger > *:nth-child(4) { animation-delay: 0.14s; }
+.stagger > *:nth-child(5) { animation-delay: 0.18s; }
+.stagger > *:nth-child(6) { animation-delay: 0.22s; }
+.stagger > *:nth-child(7) { animation-delay: 0.26s; }
+.stagger > *:nth-child(8) { animation-delay: 0.3s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ── Urdu (RTL) typography ── */
+html[dir='rtl'] body {
+  @apply font-urdu;
+  line-height: 1.9;
+}
+html[dir='rtl'] .pill {
+  @apply px-3 py-1.5;
+  line-height: 1.4;
+}
+html[dir='rtl'] .field,
+html[dir='rtl'] .btn {
+  @apply py-3;
+  line-height: 1.7;
+}
+
+/* ── Print / Save-as-PDF ── */
+@media print {
+  .no-print { display: none !important; }
+  /* Reports print on paper: force the light palette regardless of the
+     on-screen theme, or a dark-mode user prints white text on white. */
+  html, body, .dark {
+    background: #fff !important;
+    color: #0f172a !important;
+    color-scheme: light !important;
+    --color-surface: #ffffff;
+    --color-surface-2: #ffffff;
+    --color-canvas: #ffffff;
+    --color-strong: #0f172a;
+    --color-body: #1e293b;
+    --color-muted: #475569;
+    --color-subtle: #64748b;
+    --color-line: #e2e8f0;
+    --color-line-strong: #cbd5e1;
+  }
+  /*
+    The app chrome is removed with display:none (Topbar and Sidebar both carry
+    .no-print), NOT by hiding everything and lifting the document out with
+    position:absolute.
+
+    That older trick silently broke every multi-page report: an absolutely
+    positioned box does not fragment across pages in Chrome, so anything past
+    the first page was clipped — results vanished off the printout and the
+    repeating header never repeated, because no real pagination was happening.
+  */
+  .print-area {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+  /* Strip the app layout's own spacing so the document owns the page box. */
+  main { padding: 0 !important; }
+  main > div { max-width: none !important; margin: 0 !important; animation: none !important; }
+  .print-area .card { box-shadow: none !important; border: none !important; }
+
+  /* A4 with room for a lab's pre-printed stationery if they use it. */
+  @page { size: A4; margin: 14mm 12mm; }
+
+  /* A slip is a counter receipt, not a document: A5 wastes half a sheet less
+     and matches what most labs already load in the second tray. Named pages
+     let one stylesheet serve both — the report stays A4. */
+  @page slip { size: A5; margin: 8mm; }
+  .print-page-slip { page: slip; }
+
+  /* Keep colour where it carries meaning: an abnormal flag printed as plain
+     grey is a flag nobody sees. */
+  .print-area, .print-area * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* The letterhead repeats on every page, so page two is still identifiably
+     this lab's report and not a loose sheet of numbers. */
+  .letterhead { break-inside: avoid; break-after: avoid; }
+
+  /* Never strand a heading at the foot of a page, and never split a result
+     row across two pages. */
+  .print-area h1, .print-area h2, .print-area h3 { break-after: avoid; }
+  .print-area tr, .print-area img { break-inside: avoid; }
+  .print-area thead { display: table-header-group; }
+  .print-area tfoot { display: table-footer-group; }
+  .break-inside-avoid { break-inside: avoid; }
+
+  /* Hyperlink chrome is meaningless on paper. */
+  .print-area a { text-decoration: none !important; color: inherit !important; }
+
+  /* ── Running header and footer ──
+     A page separated from its report still has to say which report it belongs
+     to and who authorised it, so both repeat on every sheet.
+
+     Three parts, and all three are needed:
+       1. <thead> repeats the letterhead at the top of each page. It only works
+          if the body has several <tr>s — Chrome repeats a header group when it
+          breaks BETWEEN rows, never when it breaks inside one giant cell.
+       2. <tfoot> holds an empty spacer, which reserves the footer's height at
+          the foot of every page. Without it the fixed footer paints straight
+          over the last rows and results silently vanish off the printout.
+       3. The real footer is position:fixed, which Chrome paints once per page
+          at the bottom — that is what pins the signature bottom-right rather
+          than leaving it wherever the results happened to stop. */
+  .print-running-head { display: table-header-group; }
+  .print-foot-spacer { display: table-footer-group; }
+
+  .print-running-foot {
+    position: fixed !important;
+    bottom: 0;
+    inset-inline: 0;
+    background: #fff;
+    margin: 0 !important;
+  }
+}
