@@ -162,7 +162,7 @@ async function main() {
     cardId?: string | null;
     cardFee?: number;
     pay?: { amount: number; method: 'CASH' | 'CARD' | 'ONLINE'; hoursAgo?: number } | null;
-    lineStatus: string;
+    lineStatus: NonNullable<Prisma.OrderLineUncheckedCreateWithoutVisitInput['status']>;
   }) {
     const gross = opts.testCodes.reduce((s, c) => s + priceOf(c), 0);
     const discount = Math.round((gross * (opts.discountPct ?? 0)) / 100);
@@ -200,7 +200,10 @@ async function main() {
         visitId: visit.id,
         grossAmount: gross,
         discount,
-        discountSource: opts.cardId ? 'FAMILY_CARD' : discount > 0 ? 'MANUAL' : 'NONE',
+        // MANUAL is not a member of DiscountSource — the values are
+        // MANUAL_FIXED / MANUAL_PERCENT. SQLite stored the wrong string happily;
+        // Postgres would have rejected the row.
+        discountSource: opts.cardId ? 'FAMILY_CARD' : discount > 0 ? 'MANUAL_PERCENT' : 'NONE',
         familyCardId: opts.cardId ?? null,
         familyCardFee: fee,
         netAmount: net,
@@ -279,7 +282,7 @@ async function main() {
         if (raw === undefined) continue;
         const num = Number(raw);
         const range = param.referenceRanges[0];
-        let flag: string = 'NORMAL';
+        let flag: NonNullable<Prisma.ResultValueUncheckedCreateInput['flag']> = 'NORMAL';
         if (range && !Number.isNaN(num)) {
           const cLow = range.criticalLow != null ? Number(range.criticalLow) : null;
           const cHigh = range.criticalHigh != null ? Number(range.criticalHigh) : null;

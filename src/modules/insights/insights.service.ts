@@ -1,7 +1,7 @@
 import { tenantDb } from '@/core/db/context';
 
-const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'];
-const CLOSED = [...RELEASED, 'CANCELLED'];
+const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'] as const;
+const CLOSED = [...RELEASED, 'CANCELLED'] as const;
 
 function startOfToday(): Date {
   const d = new Date();
@@ -82,8 +82,8 @@ export async function getDashboard(branchId: string): Promise<DashboardData> {
   ] = await Promise.all([
     (await tenantDb()).payment.findMany({ where: { at: { gte: today }, invoice: { visit: { branchId } } }, select: { amount: true } }),
     (await tenantDb()).visit.count({ where: { branchId, bookedAt: { gte: today } } }),
-    (await tenantDb()).orderLine.count({ where: { visit: { branchId }, status: { notIn: CLOSED } } }),
-    (await tenantDb()).orderLine.count({ where: { visit: { branchId }, status: { notIn: CLOSED }, dueAt: { lt: now } } }),
+    (await tenantDb()).orderLine.count({ where: { visit: { branchId }, status: { notIn: [...CLOSED] } } }),
+    (await tenantDb()).orderLine.count({ where: { visit: { branchId }, status: { notIn: [...CLOSED] }, dueAt: { lt: now } } }),
     (await tenantDb()).payment.findMany({ where: { at: { gte: weekAgo }, invoice: { visit: { branchId } } }, select: { amount: true, at: true } }),
     (await tenantDb()).orderLine.groupBy({ by: ['testId'], where: { visit: { branchId } }, _count: { testId: true }, orderBy: { _count: { testId: 'desc' } }, take: 6 }),
     (await tenantDb()).visit.groupBy({ by: ['doctorId'], where: { branchId, doctorId: { not: null } }, _count: { doctorId: true }, orderBy: { _count: { doctorId: 'desc' } }, take: 5 }),

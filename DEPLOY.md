@@ -82,3 +82,37 @@ network-first caching so visited pages survive brief connectivity drops.
 - Playwright e2e for the booking → result → approve → report flow.
 - Nightly encrypted DB backups + a restore drill.
 - Move rate-limit / OTP / session stores to Redis if running multiple instances.
+
+---
+
+## Deploying to Vercel
+
+Vercel runs `vercel-build` (`prisma generate && prisma migrate deploy && next build`),
+so the client is generated and migrations applied on every deploy.
+
+**SQLite cannot be used on Vercel.** Serverless functions get an ephemeral,
+read-only filesystem: a `file:` database would be wiped between requests and
+lost on every deploy. A hosted Postgres is required — Vercel Postgres, Neon or
+Supabase all work, since `prisma/schema.prisma` already targets `postgresql`.
+
+Environment variables (Project → Settings → Environment Variables):
+
+| Name | Value |
+|---|---|
+| `DATABASE_URL` | the pooled Postgres connection string |
+| `DIRECT_URL` | direct (non-pooled) URL, if the provider gives one — needed for migrations |
+| `AUTH_SECRET` | `openssl rand -base64 32` |
+| `AUTH_TRUST_HOST` | `true` |
+
+After the first successful deploy, seed once from your machine against the same
+database:
+
+```bash
+DATABASE_URL="<the same URL>" npm run db:seed
+DATABASE_URL="<the same URL>" npm run db:sync-perms
+# optional, for a demo instance only:
+DATABASE_URL="<the same URL>" npm run db:demo
+```
+
+Then sign in as `admin` / `admin123` and change the password immediately — the
+instance is on the public internet from the moment it deploys.

@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
 import { unscopedPrisma as prisma } from '@/core/db/tenant';
 import type { ReportData } from '@/modules/reporting/report.types';
 
-const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'];
+const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'] as const;
 
 const OTP_TTL_MS = 5 * 60_000;
 const SESSION_TTL_MS = 15 * 60_000;
@@ -188,10 +188,10 @@ export const portalService = {
       where: {
         tenantId: session.tenantId,
         patient: { mobile: session.mobile },
-        orderLines: { some: { status: { in: RELEASED } } },
+        orderLines: { some: { status: { in: [...RELEASED] } } },
       },
       include: {
-        orderLines: { where: { status: { in: RELEASED } }, include: { test: true } },
+        orderLines: { where: { status: { in: [...RELEASED] } }, include: { test: true } },
       },
       orderBy: { bookedAt: 'desc' },
       take: 30,

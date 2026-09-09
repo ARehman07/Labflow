@@ -53,7 +53,7 @@ export async function getReportData(
         },
       },
       orderLines: {
-        where: { status: { in: RELEASED as unknown as string[] } },
+        where: { status: { in: [...RELEASED] } },
         include: {
           test: { include: { parameters: { orderBy: { sortOrder: 'asc' }, include: { referenceRanges: true } } } },
           results: { include: { approvedBy: true } },
