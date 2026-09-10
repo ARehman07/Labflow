@@ -48,6 +48,21 @@ if (!runtime) {
   process.exit(1);
 }
 
+// AUTH_SECRET is not needed to compile, so without this check the build goes
+// green and every sign-in then fails at runtime with nothing in the build log
+// to explain it. Fail here instead, where the message is visible.
+if (!process.env.AUTH_SECRET || process.env.AUTH_SECRET.trim() === '') {
+  console.error(
+    '\n✖ AUTH_SECRET is not set.\n\n' +
+    '  Sessions are signed with it. Without it the build would succeed and\n' +
+    '  every login would fail, with nothing here to say why.\n\n' +
+    '  Generate one:      openssl rand -base64 32\n' +
+    '  Then add it in:    Project → Settings → Environment Variables\n' +
+    '  Add AUTH_TRUST_HOST=true at the same time.\n',
+  );
+  process.exit(1);
+}
+
 console.log(`Using ${runtime.name} for the app, ${migrate.name} for migrations.`);
 
 const steps = [
