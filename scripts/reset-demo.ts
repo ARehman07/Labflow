@@ -77,14 +77,21 @@ async function main() {
 
   // ── 1. Clear ────────────────────────────────────────────────────────────
   const cleared: Record<string, number> = {};
-  await prisma.$transaction(async (tx) => {
-    for (const model of WIPE_ORDER) {
-      const delegate = (tx as unknown as Record<string, { deleteMany?: (a: unknown) => Promise<{ count: number }> }>)[model];
-      if (!delegate?.deleteMany) continue;
-      const res = await delegate.deleteMany({ where: { tenantId } });
-      if (res.count > 0) cleared[model] = res.count;
-    }
-  });
+  await prisma.$transaction(
+    async (tx) => {
+      for (const model of WIPE_ORDER) {
+        const delegate = (tx as unknown as Record<string, { deleteMany?: (a: unknown) => Promise<{ count: number }> }>)[model];
+        if (!delegate?.deleteMany) continue;
+        const res = await delegate.deleteMany({ where: { tenantId } });
+        if (res.count > 0) cleared[model] = res.count;
+      }
+    },
+    // Twenty-two round trips finish instantly against a local file and blow
+    // through Prisma's 5s default against a hosted database a continent away.
+    // The wipe has to stay one transaction — a half-cleared database is worse
+    // than a slow one — so give it room instead of splitting it up.
+    { timeout: 120_000, maxWait: 30_000 },
+  );
   console.log('cleared:', cleared);
 
   const now = new Date();
