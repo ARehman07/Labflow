@@ -10,7 +10,12 @@ const { auth } = NextAuth(authConfig);
  * redirected to /login. The login page and public portal stay open.
  */
 export default auth((req) => {
-  const isLoggedIn = !!req.auth;
+  // A session is only usable if it carries the tenant it belongs to. A cookie
+  // that decrypts but predates the tenant fields (or was minted by another app
+  // sharing this host — cookies ignore the port) would otherwise sail through
+  // here and blow up deep in a page as MissingTenantError. Treat it as signed
+  // out so the user lands on /login and gets a fresh, complete token.
+  const isLoggedIn = !!req.auth?.user?.tenantId;
   const { pathname } = req.nextUrl;
 
   const isPublic =
