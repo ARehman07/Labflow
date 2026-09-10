@@ -96,23 +96,26 @@ lost on every deploy. A hosted Postgres is required — Vercel Postgres, Neon or
 Supabase all work, since `prisma/schema.prisma` already targets `postgresql`.
 
 The connection string does **not** have to be called `DATABASE_URL`. Vercel's
-Postgres integration lets you choose the variable prefix, so the same database
-may arrive as `POSTGRES_URL`, `STORAGE_URL`, `STORAGE_PRISMA_URL` and so on —
-and Prisma, which only ever reads `DATABASE_URL`, then reports it as "an empty
+Postgres integration applies your chosen prefix to the *whole* standard name, so
+picking the prefix `STORAGE` produces `STORAGE_POSTGRES_URL`,
+`STORAGE_DATABASE_URL_UNPOOLED` and so on — never `STORAGE_URL`. It also injects
+an **empty** `DATABASE_URL`, which Prisma reports as "resolved to an empty
 string" on a database that is provisioned and healthy.
 
-`scripts/vercel-build.mjs` and `src/core/db/database-url.ts` resolve it at build
-time and at runtime, in this order:
+So the URL is matched by **suffix, with any prefix accepted**, in
+`scripts/vercel-build.mjs` (build) and `src/core/db/database-url.ts` (runtime):
 
-```
-DATABASE_URL → POSTGRES_PRISMA_URL → STORAGE_PRISMA_URL
-             → POSTGRES_URL_NON_POOLING → STORAGE_URL_NON_POOLING
-             → DATABASE_URL_UNPOOLED → POSTGRES_URL → STORAGE_URL
-```
+| Purpose | Suffixes, best first |
+|---|---|
+| App | `POSTGRES_PRISMA_URL`, `DATABASE_URL`, `POSTGRES_URL`, `DATABASE_URL_UNPOOLED`, `POSTGRES_URL_NON_POOLING` |
+| Migrations | `DIRECT_URL`, then `DATABASE_URL_UNPOOLED`, `POSTGRES_URL_NON_POOLING`, … |
 
-Migrations separately prefer a direct (non-pooled) URL — `DIRECT_URL`, or any
-`*_NON_POOLING` variant — because the advisory locks they take are commonly
-refused through a pooler.
+Migrations prefer a direct (non-pooled) connection because the advisory locks
+they take are commonly refused through a pooler. Candidates must look like
+Postgres URLs — the same integration exports `..._PGHOST` and `..._PGPASSWORD`,
+which are not — and `..._NO_SSL` variants are excluded outright rather than
+ranked low. An explicitly set `DATABASE_URL` always wins, so you can override
+whatever the host injected.
 
 So attaching the database is usually enough. The only variables you must add by
 hand are:
