@@ -14,26 +14,51 @@
  */
 import { spawnSync } from 'node:child_process';
 
-const pick = (...names) => {
-  for (const n of names) {
-    const v = process.env[n];
-    if (typeof v === 'string' && v.trim() !== '') return { name: n, value: v.trim() };
+/**
+ * Vercel's Postgres integration applies your chosen prefix to the *whole*
+ * standard name, so a database appears as STORAGE_POSTGRES_URL rather than
+ * STORAGE_URL. Enumerating names cannot keep up with that; match on the suffix
+ * and accept any prefix. Values are verified to be Postgres URLs, because the
+ * same integration also exports ..._PGHOST, ..._PGPASSWORD and friends.
+ */
+const RUNTIME_SUFFIXES = [
+  'POSTGRES_PRISMA_URL', 'DATABASE_URL', 'POSTGRES_URL',
+  'DATABASE_URL_UNPOOLED', 'POSTGRES_URL_NON_POOLING',
+];
+// Migrations want a direct connection: poolers refuse their advisory locks.
+const DIRECT_SUFFIXES = [
+  'DATABASE_URL_UNPOOLED', 'POSTGRES_URL_NON_POOLING',
+  'POSTGRES_PRISMA_URL', 'DATABASE_URL', 'POSTGRES_URL',
+];
+
+const isPostgresUrl = (v) => typeof v === 'string' && /^postgres(ql)?:\/\/\S/.test(v.trim());
+// ..._NO_SSL is a real variable Neon exports; never send credentials in clear.
+const isUsableName = (n) => !/_NO_SSL$/i.test(n);
+
+const findBySuffix = (suffixes) => {
+  for (const suffix of suffixes) {
+    const names = Object.keys(process.env)
+      .filter(isUsableName)
+      .filter((k) => k === suffix || k.endsWith(`_${suffix}`))
+      .sort((a, b) => a.length - b.length);
+    for (const name of names) {
+      if (isPostgresUrl(process.env[name])) return { name, value: process.env[name].trim() };
+    }
   }
   return null;
 };
 
-const runtime = pick(
-  'DATABASE_URL',
-  'POSTGRES_PRISMA_URL', 'STORAGE_PRISMA_URL',
-  'POSTGRES_URL', 'STORAGE_URL',
-  'POSTGRES_URL_NON_POOLING', 'STORAGE_URL_NON_POOLING', 'DATABASE_URL_UNPOOLED',
-);
-
-// Migrations want the unpooled connection when one is offered.
-const migrate = pick(
-  'DIRECT_URL',
-  'POSTGRES_URL_NON_POOLING', 'STORAGE_URL_NON_POOLING', 'DATABASE_URL_UNPOOLED',
-) ?? runtime;
+// An explicitly set DATABASE_URL is the override escape hatch; it must outrank
+// anything the host injected.
+const runtime =
+  (isPostgresUrl(process.env.DATABASE_URL)
+    ? { name: 'DATABASE_URL', value: process.env.DATABASE_URL.trim() }
+    : null)
+  ?? findBySuffix(RUNTIME_SUFFIXES);
+const migrate =
+  (isPostgresUrl(process.env.DIRECT_URL) ? { name: 'DIRECT_URL', value: process.env.DIRECT_URL.trim() } : null)
+  ?? findBySuffix(DIRECT_SUFFIXES)
+  ?? runtime;
 
 if (!runtime) {
   // Say what IS present, not just what is missing. "Not found" alone cannot
