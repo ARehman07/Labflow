@@ -36,14 +36,32 @@ const migrate = pick(
 ) ?? runtime;
 
 if (!runtime) {
+  // Say what IS present, not just what is missing. "Not found" alone cannot
+  // distinguish "no database attached" from "attached, but the variables are
+  // scoped to a different environment" or "named something unexpected" — and
+  // those need opposite fixes. Names only; a value would leak into the log.
+  const seen = Object.keys(process.env)
+    .filter((k) => /POSTGRES|DATABASE|STORAGE|NEON|SUPABASE|^PG|DB_/i.test(k))
+    .sort();
+
   console.error(
     '\n✖ No Postgres connection string found.\n\n' +
     '  Looked for: DATABASE_URL, POSTGRES_PRISMA_URL, STORAGE_PRISMA_URL,\n' +
     '              POSTGRES_URL, STORAGE_URL, POSTGRES_URL_NON_POOLING,\n' +
     '              STORAGE_URL_NON_POOLING, DATABASE_URL_UNPOOLED\n\n' +
-    '  Attach a Postgres database to the project (Storage → Create Database),\n' +
-    '  or set DATABASE_URL manually. SQLite cannot be used here: serverless\n' +
-    '  functions get an ephemeral, read-only filesystem.\n',
+    (seen.length
+      ? `  Database-ish variables this build CAN see (names only):\n` +
+        seen.map((k) => `    · ${k}`).join('\n') +
+        '\n\n  One of these is probably the connection string under a name not\n' +
+        '  listed above. Either rename it to DATABASE_URL, or tell me the name.\n'
+      : '  This build can see NO database-related variables at all.\n\n' +
+        '  That usually means the variables are scoped to a different\n' +
+        '  environment. In Settings → Environment Variables, check that\n' +
+        '  Production, Preview and Development are all ticked, then redeploy —\n' +
+        '  environment variables are read at build time, so a change needs a\n' +
+        '  new build to take effect.\n') +
+    '\n  SQLite cannot be used here: serverless functions get an ephemeral,\n' +
+    '  read-only filesystem.\n',
   );
   process.exit(1);
 }
