@@ -6,12 +6,18 @@
  *   1. A family-card holder gets the card rate.
  *   2. Where more than one AUTOMATIC discount is eligible (card, doctor),
  *      compute each as an amount and take the LARGEST. They never stack.
- *   3. A card holder gets no manual discount on top. The card rate is final.
- *   4. Manual discount — fixed amount or percentage — is available only when
- *      no automatic discount applies.
+ *   3. A card holder gets no discretionary discount on top. The card is final.
+ *   4. A DISCRETIONARY (manual) discount applies only when no automatic one
+ *      does, and never exceeds the bill.
  *
  * Policy is configuration, not counter-side discretion: staff apply what this
  * returns, they do not choose it. In xMed any user could discount to zero.
+ *
+ * The discretionary discount is a manual one: a rupee amount or a percentage
+ * typed at the counter, with the reason written in the booking's comments.
+ * For a while it was a CARE_OF grant, bounded by a named staff member's cap;
+ * that did not fit a lab where the person vouching for a patient can be
+ * anyone. CARE_OF stays in DiscountSource only for invoices raised then.
  *
  * Pure and session-free, so every rule above is directly testable.
  */
@@ -21,7 +27,8 @@ export type DiscountSource =
   | 'MANUAL_FIXED'
   | 'MANUAL_PERCENT'
   | 'FAMILY_CARD'
-  | 'DOCTOR';
+  | 'DOCTOR'
+  | 'CARE_OF';
 
 export interface DiscountInputs {
   gross: number;
@@ -29,7 +36,10 @@ export interface DiscountInputs {
   familyCardPct?: number | null;
   /** Doctor's patient discount, as a percentage. */
   doctorPct?: number | null;
-  /** What reception typed. Ignored when an automatic discount applies. */
+  /**
+   * Typed at the counter: a rupee amount or a percentage of the tests.
+   * Ignored when an automatic discount applies.
+   */
   manual?: { type: 'FIXED' | 'PERCENT'; value: number } | null;
 }
 
@@ -61,12 +71,13 @@ export function resolveDiscount(input: DiscountInputs): ResolvedDiscount {
     return {
       amount,
       source: winner.source,
-      // A manual entry is discarded, not added — rule 3.
+      // A discretionary entry is discarded, not added — rule 3.
       manualOverridden: Boolean(input.manual && input.manual.value > 0),
       net: gross - amount,
     };
   }
 
+  // Discretionary, bounded by the bill.
   if (input.manual && input.manual.value > 0) {
     const raw =
       input.manual.type === 'PERCENT' ? pct(gross, input.manual.value) : input.manual.value;

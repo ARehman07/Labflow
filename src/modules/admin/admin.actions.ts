@@ -3,6 +3,7 @@
 import { requirePermission } from '@/core/rbac/guard';
 import { adminService } from './admin.service';
 import { branchSchema, departmentSchema, doctorSchema, userSchema, testSchema } from './admin.schema';
+import { DAYS_PER, MAX_AGE_DAYS, ParameterInUseError } from './admin.service';
 
 export type Res = { ok: true } | { ok: false; error: string };
 
@@ -101,12 +102,50 @@ export async function listTestsAction(): Promise<TestListDTO[]> {
   }));
 }
 
+export interface TestRangeDTO {
+  sex: 'ANY' | 'MALE' | 'FEMALE';
+  ageMin: string;
+  ageMax: string;
+  ageUnit: 'YEARS' | 'MONTHS' | 'DAYS';
+  low: string;
+  high: string;
+  criticalLow: string;
+  criticalHigh: string;
+  text: string;
+}
 export interface TestParamDTO {
   name: string; code: string; unit: string; valueType: string; options: string;
   isBold: boolean; refLow: string; refHigh: string; refText: string; formula: string;
+  cutoff: string; positiveLabel: string; negativeLabel: string;
+  ranges: TestRangeDTO[];
+}
+
+/** Show a stored age band in the largest unit that divides it exactly. */
+function toRangeDTO(r: {
+  sex: string; ageMinDays: number; ageMaxDays: number;
+  low: unknown; high: unknown; criticalLow: unknown; criticalHigh: unknown; displayText: string | null;
+}): TestRangeDTO {
+  const max = r.ageMaxDays >= MAX_AGE_DAYS ? null : r.ageMaxDays;
+  const fits = (n: number) => r.ageMinDays % n === 0 && (max === null || max % n === 0);
+  const unit: TestRangeDTO['ageUnit'] = fits(365) ? 'YEARS' : fits(30) ? 'MONTHS' : 'DAYS';
+  const per = DAYS_PER[unit];
+  const num = (v: unknown) => (v == null ? '' : String(Number(v)));
+  return {
+    sex: r.sex as TestRangeDTO['sex'],
+    ageMin: r.ageMinDays > 0 ? String(r.ageMinDays / per) : '',
+    ageMax: max === null ? '' : String(max / per),
+    ageUnit: unit,
+    low: num(r.low),
+    high: num(r.high),
+    criticalLow: num(r.criticalLow),
+    criticalHigh: num(r.criticalHigh),
+    text: r.displayText ?? '',
+  };
 }
 export interface TestEditDTO {
   id: string; name: string; code: string; departmentId: string; tatHours: number; specimenType: string; price: number;
+  methodNote: string;
+  reportFormat: 'STANDARD' | 'CULTURE';
   parameters: TestParamDTO[];
 }
 export async function getTestAction(id: string): Promise<TestEditDTO | null> {
@@ -115,6 +154,8 @@ export async function getTestAction(id: string): Promise<TestEditDTO | null> {
   if (!t) return null;
   return {
     id: t.id, name: t.name, code: t.code, departmentId: t.departmentId, tatHours: t.tatHours,
+    methodNote: t.methodNote ?? '',
+    reportFormat: t.reportFormat as 'STANDARD' | 'CULTURE',
     specimenType: t.specimenType, price: latestPrice(t.prices),
     parameters: t.parameters.map((p) => {
       const r = p.referenceRanges[0];
@@ -125,6 +166,10 @@ export async function getTestAction(id: string): Promise<TestEditDTO | null> {
         refHigh: r?.high != null ? String(Number(r.high)) : '',
         refText: r?.displayText ?? '',
         formula: p.formula?.expression ?? '',
+        cutoff: p.cutoff != null ? String(Number(p.cutoff)) : '',
+        positiveLabel: p.positiveLabel ?? '',
+        negativeLabel: p.negativeLabel ?? '',
+        ranges: p.referenceRanges.map(toRangeDTO),
       };
     }),
   };
@@ -140,6 +185,7 @@ export async function saveTestAction(id: string | null, input: unknown): Promise
     const res = id ? await adminService.updateTest(id, p.data, branchId) : await adminService.createTest(p.data, branchId);
     return { ok: true, id: res.id };
   } catch (e) {
+    if (e instanceof ParameterInUseError) return { ok: false, error: e.message };
     const msg = e instanceof Error && /Foreign key|constraint/i.test(e.message)
       ? 'Cannot restructure a test that already has saved results.'
       : 'Save failed. Check the test code is unique.';

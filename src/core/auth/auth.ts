@@ -72,6 +72,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           role: user.role.name,
           branchId: user.branchId ?? null,
           branchName: user.branch?.name ?? null,
+          partnerLabId: user.partnerLabId ?? null,
+          doctorId: user.doctorId ?? null,
           permissions: user.role.permissions.map((rp) => rp.permission.code),
         };
       },

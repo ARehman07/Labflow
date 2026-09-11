@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Eye, EyeOff, Check, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/core/i18n/I18nProvider';
 
 /**
  * Shared by "set your password" and "change password" so the rule shown is the
@@ -17,6 +18,7 @@ export function PasswordFields({
   onNew: (v: string) => void;
   onConfirm: (v: string) => void;
 }) {
+  const { t } = useI18n();
   const [show, setShow] = useState(false);
 
   const longEnough = newPassword.length >= 8;
@@ -26,7 +28,7 @@ export function PasswordFields({
   return (
     <div className="space-y-3">
       <div>
-        <label className="label" htmlFor="new-password">New password</label>
+        <label className="label" htmlFor="new-password">{t('pw.new')}</label>
         <div className="relative">
           <input
             id="new-password"
@@ -39,7 +41,7 @@ export function PasswordFields({
           <button
             type="button"
             onClick={() => setShow((s) => !s)}
-            aria-label={show ? 'Hide password' : 'Show password'}
+            aria-label={show ? t('pw.hide') : t('pw.show')}
             className="absolute inset-y-0 end-0 flex items-center pe-3.5 text-subtle transition-colors hover:text-body"
           >
             {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -48,7 +50,7 @@ export function PasswordFields({
       </div>
 
       <div>
-        <label className="label" htmlFor="confirm-password">Type it again</label>
+        <label className="label" htmlFor="confirm-password">{t('pw.again')}</label>
         <input
           id="confirm-password"
           type={show ? 'text' : 'password'}
@@ -60,9 +62,9 @@ export function PasswordFields({
       </div>
 
       <ul className="space-y-1 text-xs">
-        <Rule ok={longEnough}>At least 8 characters</Rule>
-        <Rule ok={noEdgeSpace}>No space at the start or end</Rule>
-        <Rule ok={matches}>Both entries match</Rule>
+        <Rule ok={longEnough}>{t('pw.ruleLength')}</Rule>
+        <Rule ok={noEdgeSpace}>{t('pw.ruleSpace')}</Rule>
+        <Rule ok={matches}>{t('pw.ruleMatch')}</Rule>
       </ul>
     </div>
   );

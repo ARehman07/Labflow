@@ -25,6 +25,9 @@ const csp = [
 
 const nextConfig = {
   reactStrictMode: true,
+  // Booking attachments (a phone photo of a prescription, a scanned letter) are
+  // sent through a server action; the default 1 MB is smaller than most photos.
+  experimental: { serverActions: { bodySizeLimit: '6mb' } },
   // Security headers (closes items from ../vulnerabilities.md: H-1, H-3, clickjacking, CSP).
   async headers() {
     return [
@@ -35,7 +38,8 @@ const nextConfig = {
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          // Camera for this site only: reception takes a patient photo at registration.
+          { key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=()' },
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
           { key: 'X-DNS-Prefetch-Control', value: 'off' },
         ],

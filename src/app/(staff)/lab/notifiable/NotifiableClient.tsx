@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState, useTransition } from 'react';
-import Link from 'next/link';
 import { BellRing } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button } from '@/components/ui/Button';
@@ -10,6 +9,9 @@ import {
   recordNotifiableFilingAction,
   type NotifiableDTO,
 } from '@/modules/lab/lab.actions';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { ListSkeleton } from '@/components/ui/Skeleton';
+import { Tr } from '@/components/ui/Tr';
 
 export function NotifiableClient() {
   const { t } = useI18n();
@@ -48,25 +50,21 @@ export function NotifiableClient() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="flex items-center gap-2 text-xl font-bold text-strong">
-          <BellRing className="h-5 w-5 text-amber-600" aria-hidden />
-          {t('notifiable.title')}
-        </h1>
-        <Link href="/lab">
-          <Button variant="ghost">← {t('lab.title')}</Button>
-        </Link>
-      </div>
+    <div className="page">
+      <PageHeader
+        icon={<BellRing className="h-6 w-6 text-amber-600" aria-hidden />}
+        title={t('notifiable.title')}
+        back={{ href: '/lab', label: t('lab.title') }}
+      />
 
       <p className="rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn-text">
         {t('notifiable.intro')}
       </p>
 
-      {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger-text">{error}</p>}
+      {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
 
       {loading ? (
-        <p className="text-subtle">{t('common.loading')}</p>
+        <ListSkeleton rows={2} />
       ) : items.length === 0 ? (
         <p className="rounded-lg bg-ok-soft p-6 text-center text-ok-text">
           {t('notifiable.none')}

@@ -19,6 +19,13 @@
   --color-surface-3: #f1f5f9;
   --color-surface-inset: #f8fafc;
 
+  /* Segmented controls: a recessed track with one raised thumb. Two tokens
+     rather than reusing surface-2/3, because the relationship has to survive
+     the theme flip — in light the track sinks below the card, in dark the
+     thumb has to LIFT above it. A single pair of greys cannot do both. */
+  --color-segment-track: #eceff5;
+  --color-segment-thumb: #ffffff;
+
   /* Semantic lines */
   --color-line: #e2e8f0;
   --color-line-strong: #cbd5e1;
@@ -161,6 +168,10 @@
 
 :root {
   color-scheme: light;
+
+  /* Depth for recessed things (inputs, tracks). Dark needs a much heavier
+     shadow to register at all against a near-black ground. */
+  --inset-well: inset 0 1px 2px 0 rgb(15 23 42 / 0.06);
 }
 
 /* ── Dark theme ──
@@ -172,11 +183,15 @@
 .dark {
   color-scheme: dark;
 
+  --inset-well: inset 0 1px 2px 0 rgb(0 0 0 / 0.4);
+
   --color-canvas: #0a0e17;
   --color-surface: #121826;
   --color-surface-2: #182032;
   --color-surface-3: #1e293f;
   --color-surface-inset: #0d121d;
+  --color-segment-track: #0a0f1c;
+  --color-segment-thumb: #263149;
 
   --color-line: #232c40;
   --color-line-strong: #33405c;
@@ -262,19 +277,50 @@ body {
 *::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
 
 @layer components {
+  /* ── One frame for every staff page ──────────────────────────────
+     Width is set once, here, on the shell the staff layout wraps around
+     each page. Pages must NOT re-cap themselves with their own max-w-*:
+     that is what made Reception (768px) and Billing (1152px) look like
+     two different apps. Pages use `.page` for the shared vertical rhythm
+     and inherit the width. */
+  .page-shell {
+    @apply mx-auto w-full max-w-5xl;
+  }
+  .page {
+    @apply space-y-5;
+  }
   .card {
     @apply rounded-2xl border border-line bg-surface shadow-card transition-shadow duration-300;
   }
   .card-hover {
     @apply transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover;
   }
+  /* An input is a hole you put something into, so it is drawn as one: a fill
+     recessed below the card it sits on, plus a hairline inner shadow. The old
+     rule was `bg-surface` on a `bg-surface` card — white on white, separated
+     by nothing but a pale 1px line, which is why fields were hard to pick out
+     at a glance. On focus it fills to the card colour and lifts: the field you
+     are typing into is the one that is no longer a hole. */
   .field {
-    @apply w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-body
-      placeholder:text-subtle transition-all duration-200
-      focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10;
+    @apply w-full rounded-xl border border-line-strong bg-surface-inset px-3.5 py-2.5 text-body
+      placeholder:text-subtle transition-[background-color,border-color,box-shadow] duration-200
+      hover:border-muted
+      focus:border-brand-500 focus:bg-surface focus:ring-4 focus:ring-brand-500/10;
+    box-shadow: var(--inset-well);
+  }
+  .field:focus {
+    box-shadow: none;
   }
   .field:disabled {
-    @apply cursor-not-allowed bg-surface-2 text-muted;
+    @apply cursor-not-allowed border-line bg-surface-2 text-muted;
+    box-shadow: none;
+  }
+  /* Composite controls (an input plus a unit toggle, say) put .field on the
+     wrapper and strip the inner input bare, so the pair reads as one control
+     rather than a box inside a box. */
+  .field-inner {
+    @apply w-full min-w-0 border-0 bg-transparent p-0 text-body outline-none
+      placeholder:text-subtle focus-visible:ring-0 focus-visible:ring-offset-0;
   }
   .label {
     @apply mb-1.5 block text-sm font-medium text-body;

@@ -8,6 +8,20 @@ export interface ReportParam {
   flag: string;
   isBold: boolean;
   isCalculated: boolean;
+  /** For a cut-off result: "Reactive" / "Non-reactive" (or the test's own words). */
+  interpretation: string | null;
+  /** This patient's earlier released values, one per column in ReportTest.history (newest first). */
+  previous: (string | null)[];
+  previousFlags: (string | null)[];
+  /** Direction against the most recent earlier value, when both are numbers. */
+  trend: 'UP' | 'DOWN' | 'SAME' | null;
+}
+
+/** One earlier visit shown as a column on a report printed with history. */
+export interface HistoryColumn {
+  visitId: string;
+  slipNo: string;
+  date: string;
 }
 
 export interface ReportTest {
@@ -15,6 +29,23 @@ export interface ReportTest {
   department: string;
   approvedBy: string | null;
   params: ReportParam[];
+  /** Earlier visits where this test was released for the same patient (MR#), newest first, at most three. */
+  history: HistoryColumn[];
+  /** How the test is done — analyzer, method, reagent — printed under the results. */
+  methodNote: string | null;
+  /** Remarks entered with the result, printed for the patient and doctor. */
+  remarks: string | null;
+  /** The reference lab that performed it, when it was sent out. */
+  performedAt: string | null;
+  /** Culture & sensitivity, for tests reported that way. */
+  culture: {
+    growth: boolean;
+    organism: string | null;
+    colonyCount: string | null;
+    incubation: string | null;
+    remarks: string | null;
+    sensitivities: { antibiotic: string; result: string; mic: string | null }[];
+  } | null;
 }
 
 /** Who the lab is, as it should appear on paper. */
@@ -45,4 +76,6 @@ export interface ReportData {
   reportedAt: string | null;
   doctorName: string | null;
   tests: ReportTest[];
+  /** Whether any test on the report has an earlier result to show. */
+  hasHistory: boolean;
 }

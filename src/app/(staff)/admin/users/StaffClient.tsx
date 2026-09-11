@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import Link from 'next/link';
 import {
-  ArrowLeft, Plus, Copy, Check, KeyRound, UserX, UserCheck, X, Info, ShieldAlert,
+  Plus, Copy, Check, KeyRound, UserX, UserCheck, X, Info, ShieldAlert,
 } from 'lucide-react';
+import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { ConfirmButton } from '@/components/ui/ConfirmButton';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/utils';
@@ -18,6 +20,7 @@ import {
   setStaffActiveAction,
   type StaffRow,
 } from '@/modules/staff/staff.actions';
+import { Tr } from '@/components/ui/Tr';
 
 /**
  * Staff accounts are issued here and nowhere else — there is no sign-up.
@@ -34,46 +37,53 @@ export function StaffClient({
   roles: { id: string; name: string }[];
   branches: { id: string; name: string }[];
 }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [staff, setStaff] = useState(initial);
   const [adding, setAdding] = useState(false);
   const [handover, setHandover] = useState<{ username: string; tempPassword: string } | null>(null);
-  const [isPending, startTransition] = useTransition();
+  // Which button is working, as "<userId>:<action>". A single page-wide pending
+  // flag made every row's buttons spin when one was pressed, which reads as
+  // "you just reset everybody's password".
+  const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = () => listStaffAction().then(setStaff);
 
+  async function run(key: string, work: () => Promise<void>) {
+    setBusy(key);
+    try { await work(); } finally { setBusy(null); }
+  }
+
   function reset(id: string, name: string) {
-    startTransition(async () => {
+    run(`${id}:reset`, async () => {
       const res = await resetStaffPasswordAction(id);
-      if (res.ok) { setHandover(res); await refresh(); toast('success', `New password issued for ${name}`); }
+      if (res.ok) { setHandover(res); await refresh(); toast('success', t('staff.pwIssued').replace('{name}', name)); }
       else toast('error', res.error);
     });
   }
 
   function setActive(id: string, active: boolean, name: string) {
-    startTransition(async () => {
+    run(`${id}:active`, async () => {
       const res = await setStaffActiveAction(id, active);
-      if (res.ok) { await refresh(); toast('success', `${name} ${active ? 'reactivated' : 'deactivated'}`); }
-      else toast('error', res.error);
+      if (res.ok) {
+        await refresh();
+        toast('success', (active ? t('staff.reactivated') : t('staff.deactivated')).replace('{name}', name));
+      } else toast('error', res.error);
     });
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Link href="/admin"><Button variant="ghost"><ArrowLeft className="h-4 w-4" /></Button></Link>
-          <div>
-            <h1 className="text-xl font-extrabold tracking-tight text-strong">Staff accounts</h1>
-            <p className="text-sm text-muted">You create the account and hand over the password. Nobody signs themselves up.</p>
-          </div>
-        </div>
-        {!adding && (
+    <div className="page">
+      <PageHeader
+        title={t('staff.title')}
+        subtitle={t('staff.subtitle')}
+        back={{ href: '/admin', label: t('admin.title') }}
+        actions={!adding ? (
           <Button onClick={() => { setAdding(true); setHandover(null); }}>
-            <Plus className="h-4 w-4" /> Add staff
+            <Plus className="h-4 w-4" /> {t('staff.add')}
           </Button>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       {handover && <Handover {...handover} onClose={() => setHandover(null)} />}
 
@@ -81,7 +91,6 @@ export function StaffClient({
         <AddStaff
           roles={roles}
           branches={branches}
-          busy={isPending}
           onCancel={() => setAdding(false)}
           onCreated={async (res) => { setHandover(res); setAdding(false); await refresh(); }}
         />
@@ -90,47 +99,52 @@ export function StaffClient({
       <Card className="p-2">
         <ul className="space-y-0.5">
           {staff.map((u) => (
-            <li
-              key={u.id}
-              className={cn('flex flex-wrap items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-surface-2',
-                !u.isActive && 'opacity-60')}
-            >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-500/12 text-xs font-bold text-brand-600 dark:text-brand-300">
-                {u.fullName.slice(0, 1).toUpperCase()}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-body">{u.fullName}</span>
-                  <Badge tone="neutral" size="sm">{u.role}</Badge>
-                  {!u.isActive && <Badge tone="danger" size="sm">Deactivated</Badge>}
-                  {u.mustChangePassword && u.isActive && (
-                    <Badge tone="warning" size="sm">Password not set yet</Badge>
-                  )}
+            <li key={u.id} className="rounded-lg transition-colors hover:bg-surface-2">
+              <div className={cn('flex flex-wrap items-center gap-3 px-2 py-2.5', !u.isActive && 'opacity-60')}>
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-500/12 text-xs font-bold text-brand-600 dark:text-brand-300">
+                  {u.fullName.slice(0, 1).toUpperCase()}
                 </span>
-                <span className="block truncate text-xs text-subtle">
-                  {u.username}
-                  {u.phone && ` · ${u.phone}`}
-                  {u.branch && ` · ${u.branch}`}
-                  {' · '}
-                  {u.lastLoginAt ? `last in ${new Date(u.lastLoginAt).toLocaleDateString('en-GB')}` : 'never signed in'}
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-body">{u.fullName}</span>
+                    <Badge tone="neutral" size="sm">{u.role}</Badge>
+                    {!u.isActive && <Badge tone="danger" size="sm">{t('staff.badgeDeactivated')}</Badge>}
+                    {u.mustChangePassword && u.isActive && (
+                      <Badge tone="warning" size="sm">{t('staff.badgePwPending')}</Badge>
+                    )}
+                  </span>
+                  <span className="block truncate text-xs text-subtle">
+                    {u.username}
+                    {u.phone && ` · ${u.phone}`}
+                    {u.branch && ` · ${u.branch}`}
+                    {' · '}
+                    {u.lastLoginAt
+                      ? t('staff.lastIn').replace('{date}', new Date(u.lastLoginAt).toLocaleDateString('en-GB'))
+                      : t('staff.neverIn')}
+                  </span>
                 </span>
-              </span>
-              <span className="flex shrink-0 items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => reset(u.id, u.fullName)} loading={isPending}>
-                  <KeyRound className="h-3.5 w-3.5" /> Reset password
-                </Button>
-                {!u.isSelf && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setActive(u.id, !u.isActive, u.fullName)}
-                    loading={isPending}
-                  >
-                    {u.isActive ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
-                    {u.isActive ? 'Deactivate' : 'Reactivate'}
+                <span className="flex shrink-0 flex-wrap items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => reset(u.id, u.fullName)} loading={busy === `${u.id}:reset`}>
+                    <KeyRound className="h-3.5 w-3.5" /> {t('staff.resetPw')}
                   </Button>
-                )}
-              </span>
+                  {!u.isSelf && (u.isActive ? (
+                    // Locks someone out mid-shift, so it asks first.
+                    <ConfirmButton
+                      onConfirm={() => setActive(u.id, false, u.fullName)}
+                      loading={busy === `${u.id}:active`}
+                      prompt={t('staff.deactivatePrompt').replace('{name}', u.fullName)}
+                      confirmLabel={t('staff.deactivate')}
+                    >
+                      <UserX className="h-3.5 w-3.5" /> {t('staff.deactivate')}
+                    </ConfirmButton>
+                  ) : (
+                    <Button variant="ghost" size="sm" onClick={() => setActive(u.id, true, u.fullName)}
+                      loading={busy === `${u.id}:active`}>
+                      <UserCheck className="h-3.5 w-3.5" /> {t('staff.reactivate')}
+                    </Button>
+                  ))}
+                </span>
+              </div>
             </li>
           ))}
         </ul>
@@ -138,8 +152,7 @@ export function StaffClient({
 
       <p className="flex items-start gap-1.5 text-xs text-subtle">
         <Info className="mt-px h-3.5 w-3.5 shrink-0" />
-        Staff who leave are deactivated, never deleted — their name is attached to every result
-        they entered and every payment they took, and that record has to survive.
+        {t('staff.keepRecord')}
       </p>
     </div>
   );
@@ -149,6 +162,7 @@ export function StaffClient({
 function Handover({
   username, tempPassword, onClose,
 }: { username: string; tempPassword: string; onClose: () => void }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -169,26 +183,22 @@ function Handover({
             <ShieldAlert className="h-4 w-4" />
           </span>
           <div>
-            <h2 className="font-semibold text-strong">Give these to {username}</h2>
-            <p className="text-xs text-subtle">
-              This password is shown once and is not stored anywhere readable. If it is lost,
-              issue a new one — you cannot look it up.
-            </p>
+            <h2 className="font-semibold text-strong">{t('handover.title').replace('{username}', username)}</h2>
+            <p className="text-xs text-subtle">{t('handover.body')}</p>
           </div>
         </div>
-        <button onClick={onClose} className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-surface-2 hover:text-body">
+        <button onClick={onClose} aria-label={t('common.close')}
+          className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-surface-2 hover:text-body">
           <X className="h-4 w-4" />
         </button>
       </div>
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <Readout label="Username" value={username} />
-        <Readout label="Temporary password" value={tempPassword} mono onCopy={copy} copied={copied} />
+        <Readout label={t('handover.username')} value={username} />
+        <Readout label={t('handover.temp')} value={tempPassword} mono onCopy={copy} copied={copied} />
       </div>
 
-      <p className="mt-3 text-xs text-muted">
-        They will be asked to choose their own password the first time they sign in.
-      </p>
+      <p className="mt-3 text-xs text-muted">{t('handover.next')}</p>
     </Card>
   );
 }
@@ -196,6 +206,7 @@ function Handover({
 function Readout({
   label, value, mono, onCopy, copied,
 }: { label: string; value: string; mono?: boolean; onCopy?: () => void; copied?: boolean }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-xl bg-surface-2 p-3">
       <div className="text-[11px] font-bold uppercase tracking-wider text-subtle">{label}</div>
@@ -207,7 +218,7 @@ function Readout({
           <button
             onClick={onCopy}
             className="shrink-0 rounded-lg p-1.5 text-subtle transition-colors hover:bg-surface-3 hover:text-body"
-            aria-label="Copy"
+            aria-label={t('handover.copy')}
           >
             {copied ? <Check className="h-4 w-4 text-ok-text" /> : <Copy className="h-4 w-4" />}
           </button>
@@ -218,14 +229,14 @@ function Readout({
 }
 
 function AddStaff({
-  roles, branches, busy, onCancel, onCreated,
+  roles, branches, onCancel, onCreated,
 }: {
   roles: { id: string; name: string }[];
   branches: { id: string; name: string }[];
-  busy: boolean;
   onCancel: () => void;
   onCreated: (r: { username: string; tempPassword: string }) => void;
 }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
@@ -239,7 +250,7 @@ function AddStaff({
     setError(null);
     startTransition(async () => {
       const res = await createStaffAction({ fullName, username, phone, roleId, branchId });
-      if (res.ok) { onCreated(res); toast('success', `${fullName} added`); }
+      if (res.ok) { onCreated(res); toast('success', t('staff.added').replace('{name}', fullName)); }
       else { setError(res.error); }
     });
   }
@@ -248,17 +259,18 @@ function AddStaff({
     <Card className="animate-fade-in-up p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-semibold text-strong">Add staff</h2>
-          <p className="text-xs text-subtle">A temporary password is generated for you to hand over.</p>
+          <h2 className="font-semibold text-strong">{t('addStaff.title')}</h2>
+          <p className="text-xs text-subtle">{t('addStaff.hint')}</p>
         </div>
-        <button onClick={onCancel} className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-surface-2 hover:text-body">
+        <button onClick={onCancel} aria-label={t('common.close')}
+          className="rounded-lg p-1.5 text-subtle transition-colors hover:bg-surface-2 hover:text-body">
           <X className="h-4 w-4" />
         </button>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="label" htmlFor="s-name">Full name</label>
+          <label className="label" htmlFor="s-name">{t('addStaff.fullName')}</label>
           <input
             id="s-name"
             value={fullName}
@@ -275,31 +287,31 @@ function AddStaff({
           />
         </div>
         <div>
-          <label className="label" htmlFor="s-username">Username</label>
+          <label className="label" htmlFor="s-username">{t('addStaff.username')}</label>
           <input id="s-username" value={username} onChange={(e) => setUsername(e.target.value)} className="field" />
-          <p className="mt-1 text-xs text-subtle">What they type to sign in, with the lab code.</p>
+          <p className="mt-1 text-xs text-subtle">{t('addStaff.usernameHint')}</p>
         </div>
         <div>
-          <label className="label" htmlFor="s-phone">Phone (optional)</label>
+          <label className="label" htmlFor="s-phone">{t('addStaff.phone')}</label>
           <input id="s-phone" value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" className="field" />
         </div>
         <div>
-          <label className="label">Role</label>
+          <label className="label">{t('addStaff.role')}</label>
           <Select value={roleId} onChange={setRoleId} options={roles.map((r) => ({ value: r.id, label: r.name }))} />
         </div>
         <div>
-          <label className="label">Branch</label>
+          <label className="label">{t('addStaff.branch')}</label>
           <Select value={branchId} onChange={setBranchId} options={branches.map((b) => ({ value: b.id, label: b.name }))} />
         </div>
       </div>
 
-      {error && <p className="note-danger mt-3">{error}</p>}
+      {error && <p className="note-danger mt-3"><Tr text={error} /></p>}
 
       <div className="mt-4 flex items-center gap-2">
-        <Button onClick={submit} loading={busy || isPending} disabled={fullName.trim().length < 2 || username.trim().length < 3 || !roleId}>
-          Create account
+        <Button onClick={submit} loading={isPending} disabled={fullName.trim().length < 2 || username.trim().length < 3 || !roleId}>
+          {t('addStaff.create')}
         </Button>
-        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button variant="ghost" onClick={onCancel}>{t('common.cancel')}</Button>
       </div>
     </Card>
   );

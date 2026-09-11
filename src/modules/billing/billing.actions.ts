@@ -19,6 +19,8 @@ export interface InvoiceDTO {
   net: number;
   paid: number;
   balance: number;
+  /** Paid beyond the bill — after tests were removed or the booking cancelled. */
+  refundDue: number;
   status: string;
   method: string | null; // last payment method, or 'MIXED'
 }
@@ -60,6 +62,7 @@ export async function listInvoicesAction(
       net,
       paid,
       balance: Math.max(0, net - paid),
+      refundDue: Math.max(0, paid - net),
       status: inv.status,
       method,
     };
@@ -68,6 +71,8 @@ export async function listInvoicesAction(
 
 export interface InvoiceDetailDTO {
   id: string;
+  /** The visit, so the drawer can open its slip as a receipt. */
+  visitId: string;
   slipNo: string;
   patientName: string;
   mrNo: string;
@@ -75,12 +80,16 @@ export interface InvoiceDetailDTO {
   doctorName: string | null;
   date: string;
   tests: { name: string }[];
+  /** Comments from the counter — often why a discount was given. */
+  notes: string | null;
   gross: number;
   discount: number;
   cardFee: number;
   net: number;
   paid: number;
   balance: number;
+  /** Paid beyond the bill — after tests were removed or the booking cancelled. */
+  refundDue: number;
   status: string;
   payments: { amount: number; method: string; date: string }[];
   refunds: { amount: number; reason: string | null; date: string }[];
@@ -94,19 +103,23 @@ export async function getInvoiceDetailAction(invoiceId: string): Promise<Invoice
   const paid = Number(inv.paidAmount);
   return {
     id: inv.id,
+    visitId: inv.visit.id,
     slipNo: inv.visit.slipNo,
     patientName: inv.visit.patient.fullName,
     mrNo: inv.visit.patient.mrNo,
     mobile: inv.visit.patient.mobile,
     doctorName: inv.visit.doctor?.name ?? null,
+    notes: inv.visit.notes ?? null,
     date: fmtDate(inv.createdAt),
-    tests: inv.visit.orderLines.map((l) => ({ name: l.test.name })),
+    // A test taken off the booking is not on the bill, so it is not listed on it.
+    tests: inv.visit.orderLines.filter((l) => l.status !== 'CANCELLED').map((l) => ({ name: l.test.name })),
     gross: Number(inv.grossAmount),
     discount: Number(inv.discount),
     cardFee: Number(inv.familyCardFee ?? 0),
     net,
     paid,
     balance: Math.max(0, net - paid),
+      refundDue: Math.max(0, paid - net),
     status: inv.status,
     payments: inv.payments.map((p) => ({ amount: Number(p.amount), method: p.method, date: fmtDate(p.at) })),
     refunds: inv.refunds.map((r) => ({ amount: Number(r.amount), reason: r.reason, date: fmtDate(r.at) })),

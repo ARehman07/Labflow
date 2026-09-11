@@ -152,10 +152,18 @@ export interface CardSummaryDTO {
   issuedAt: string;
 }
 
-/** The card register: what exists, who holds it, how full it is. */
+/**
+ * Cards matching a lookup: who holds each, and how full it is.
+ *
+ * Answers a search and nothing else. Without at least two characters it
+ * returns no cards at all, so the whole register is never sent to the
+ * browser — enforced here, not just by the page choosing not to ask.
+ */
 export async function listCardsAction(query?: string): Promise<CardSummaryDTO[]> {
   await requirePermission('patient.manage');
-  const cards = await familyCardService.list(query);
+  const q = query?.trim() ?? '';
+  if (q.length < 2) return [];
+  const cards = await familyCardService.list(q);
   return cards.map((c) => ({
     id: c.id,
     mobile: c.mobile,

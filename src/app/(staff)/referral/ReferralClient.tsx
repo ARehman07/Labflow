@@ -16,6 +16,7 @@ import {
   type DoctorCommission,
   type PartnerLabRow,
 } from '@/modules/referral/referral.actions';
+import { Tr } from '@/components/ui/Tr';
 
 /**
  * Two jobs live on this page and they were previously stacked with no
@@ -48,7 +49,7 @@ export function ReferralClient({ canManage, canSettle }: { canManage: boolean; c
   const owing = doctors.filter((d) => d.accrued > 0);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="page">
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight text-strong">{t('referral.title')}</h1>
         <p className="mt-0.5 text-sm text-muted">{t('referral.subtitle')}</p>
@@ -291,7 +292,7 @@ function AddPartnerForm({ onCancel, onDone }: { onCancel: () => void; onDone: ()
           <input id="pl-phone" value={phone} onChange={(e) => setPhone(e.target.value)} className="field" inputMode="tel" />
         </div>
       </div>
-      {error && <p className="note-danger mt-3">{error}</p>}
+      {error && <p className="note-danger mt-3"><Tr text={error} /></p>}
       <div className="mt-4 flex items-center gap-2">
         <Button onClick={submit} loading={isPending} disabled={name.trim().length < 2}>{t('referral.save')}</Button>
         <Button variant="ghost" onClick={onCancel}>{t('common.cancel')}</Button>

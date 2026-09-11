@@ -1,7 +1,6 @@
 'use server';
 
 import bcrypt from 'bcryptjs';
-import { randomInt } from 'crypto';
 import { z } from 'zod';
 import { requirePermission } from '@/core/rbac/guard';
 import { tenantDb, currentTenantId } from '@/core/db/context';
@@ -17,15 +16,7 @@ import { tenantDb, currentTenantId } from '@/core/db/context';
  * their own. That way an owner-chosen password is never one anyone keeps using.
  */
 
-const ADJECTIVES = ['brisk', 'calm', 'clear', 'brave', 'swift', 'bright', 'steady', 'quiet'];
-const NOUNS = ['falcon', 'cedar', 'harbor', 'meadow', 'lantern', 'compass', 'river', 'summit'];
-
-/** Readable over the counter and still hard to guess: two words + 3 digits. */
-function temporaryPassword(): string {
-  const a = ADJECTIVES[randomInt(ADJECTIVES.length)];
-  const n = NOUNS[randomInt(NOUNS.length)];
-  return `${a}-${n}-${randomInt(100, 1000)}`;
-}
+import { temporaryPassword } from '@/core/auth/temp-password';
 
 const newStaffSchema = z.object({
   fullName: z.string().min(2, 'Enter their name').max(80),
@@ -99,7 +90,10 @@ export async function createStaffAction(
   });
   await db.auditLog.create({
     data: { tenantId, actorId: me.id, entity: 'User', entityId: user.id, action: 'USER_CREATE',
-      after: JSON.stringify({ username: user.username, roleId: parsed.data.roleId }) },
+      after: JSON.stringify({
+        username: user.username,
+        roleId: parsed.data.roleId,
+      }) },
   });
   return { ok: true, username: user.username, tempPassword };
 }

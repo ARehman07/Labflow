@@ -12,6 +12,10 @@ declare module 'next-auth' {
       role: string;
       branchId: string | null;
       branchName: string | null;
+      /** Set for a B2B partner lab's portal login. */
+      partnerLabId: string | null;
+      /** Set for a referring doctor's portal login. */
+      doctorId: string | null;
       permissions: string[];
     } & DefaultSession['user'];
   }
@@ -24,6 +28,8 @@ declare module 'next-auth' {
     role: string;
     branchId: string | null;
     branchName: string | null;
+    partnerLabId: string | null;
+    doctorId: string | null;
     permissions: string[];
   }
 }

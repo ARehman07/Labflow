@@ -23,5 +23,7 @@ export const saveResultsSchema = z.object({
   orderLineId: z.string().min(1),
   // values keyed by parameter CODE
   values: z.record(z.string(), z.string()),
+  /** Printed on the report under this test. Omitted leaves it unchanged. */
+  remarks: z.string().max(500).optional(),
 });
 export type SaveResultsInput = z.infer<typeof saveResultsSchema>;

@@ -6,8 +6,11 @@ import { KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { setInitialPasswordAction } from '@/modules/account/account.actions';
 import { PasswordFields } from '@/components/account/PasswordFields';
+import { useI18n } from '@/core/i18n/I18nProvider';
+import { Tr } from '@/components/ui/Tr';
 
 export function SetPasswordClient({ name }: { name: string }) {
+  const { t } = useI18n();
   const router = useRouter();
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirm] = useState('');
@@ -32,14 +35,13 @@ export function SetPasswordClient({ name }: { name: string }) {
             <KeyRound className="h-5 w-5" />
           </span>
           <div>
-            <h1 className="font-bold text-strong">Choose your password</h1>
-            <p className="text-sm text-muted">Welcome, {name}.</p>
+            <h1 className="font-bold text-strong">{t('setPw.title')}</h1>
+            <p className="text-sm text-muted">{t('setPw.welcome').replace('{name}', name)}</p>
           </div>
         </div>
 
         <p className="mt-4 rounded-xl bg-surface-2 p-3 text-sm text-muted">
-          The password you were given is temporary and someone else knows it.
-          Pick one only you know before you carry on.
+          {t('setPw.why')}
         </p>
 
         <div className="mt-4">
@@ -51,10 +53,10 @@ export function SetPasswordClient({ name }: { name: string }) {
           />
         </div>
 
-        {error && <p className="note-danger mt-3">{error}</p>}
+        {error && <p className="note-danger mt-3"><Tr text={error} /></p>}
 
         <Button type="submit" className="mt-4 w-full" loading={isPending} disabled={newPassword.length < 8}>
-          Save and continue
+          {t('setPw.submit')}
         </Button>
       </form>
     </div>

@@ -108,9 +108,14 @@ if (!process.env.AUTH_SECRET || process.env.AUTH_SECRET.trim() === '') {
 
 console.log(`Using ${runtime.name} for the app, ${migrate.name} for migrations.`);
 
+// Permissions are data, not schema: a new permission in the catalogue reaches
+// a live database only through the sync, which is additive — it creates missing
+// permissions and grants each default role what its defaults say, and never
+// revokes a grant a lab has changed in admin.
 const steps = [
   ['npx', ['prisma', 'generate'], runtime.value],
   ['npx', ['prisma', 'migrate', 'deploy'], migrate.value],
+  ['npx', ['tsx', 'scripts/sync-permissions.ts'], migrate.value],
   ['npx', ['next', 'build'], runtime.value],
 ];
 

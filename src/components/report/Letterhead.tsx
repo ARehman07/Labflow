@@ -26,7 +26,7 @@ export function Letterhead({
 
   return (
     <header className={cn('letterhead', className)}>
-      <div className="flex items-start gap-4">
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-3 sm:flex-nowrap print:flex-nowrap">
         {data.logoDataUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- a data URL, not a remote asset
           <img
@@ -44,7 +44,7 @@ export function Letterhead({
           {/* The lab, not the software and not the branch. Never truncated —
               a clipped lab name on a narrower page ("ARFA DIAGNOSTIC CEN…") is
               worse than one that wraps onto a second line. */}
-          <h1 className="text-balance text-[26px] font-extrabold uppercase leading-tight tracking-tight text-strong print:text-[20px]">
+          <h1 className="text-balance text-[21px] font-extrabold uppercase leading-tight tracking-tight text-strong sm:text-[26px] print:text-[20px]">
             {data.labName}
           </h1>
           {data.tagline && (
@@ -61,7 +61,7 @@ export function Letterhead({
           )}
         </div>
 
-        <div className="flex shrink-0 items-start gap-3">
+        <div className="flex w-full shrink-0 items-start justify-between gap-3 sm:w-auto sm:justify-start print:w-auto print:justify-start">
           <div className="text-end">
             <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-subtle">{docLabel}</div>
             {docNumber && (

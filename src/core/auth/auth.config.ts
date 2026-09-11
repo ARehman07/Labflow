@@ -22,6 +22,8 @@ export const authConfig = {
         token.username = user.username;
         token.branchId = user.branchId;
         token.branchName = user.branchName;
+        token.partnerLabId = user.partnerLabId;
+        token.doctorId = user.doctorId;
         token.permissions = user.permissions;
       }
       return token;
@@ -36,6 +38,8 @@ export const authConfig = {
         session.user.username = (token.username as string) ?? '';
         session.user.branchId = (token.branchId as string | null) ?? null;
         session.user.branchName = (token.branchName as string | null) ?? null;
+        session.user.partnerLabId = (token.partnerLabId as string | null) ?? null;
+        session.user.doctorId = (token.doctorId as string | null) ?? null;
         session.user.permissions = (token.permissions as string[]) ?? [];
       }
       return session;

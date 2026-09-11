@@ -30,9 +30,16 @@ export const billingService = {
     const amount = Math.min(input.amount, remaining);
     const newPaid = paid + amount;
 
+    const account = input.accountId
+      ? await (await tenantDb()).paymentAccount.findFirst({ where: { id: input.accountId, isActive: true }, select: { id: true, method: true } })
+      : null;
+
     await (await tenantDb()).$transaction(async (tx) => {
       await tx.payment.create({
-        data: { tenantId: await currentTenantId(), invoiceId: invoice.id, amount, method: input.method, receivedById: userId },
+        data: {
+          tenantId: await currentTenantId(), invoiceId: invoice.id, amount,
+          method: account?.method ?? input.method, accountId: account?.id ?? null, receivedById: userId,
+        },
       });
       await tx.invoice.update({
         where: { id: invoice.id },
@@ -83,6 +90,7 @@ export const billingService = {
           invoiceId: invoice.id,
           amount: input.amount,
           reason: input.reason ?? null,
+          accountId: input.accountId ?? null,
           approvedById: userId,
         },
       });

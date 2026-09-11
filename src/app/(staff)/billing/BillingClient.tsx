@@ -1,17 +1,16 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { createPortal } from 'react-dom';
-import {
-  Search, Wallet, AlertCircle, FileClock, Files, X,
-  IdCard, Phone, CalendarDays, Stethoscope, FlaskConical, ArrowDownLeft, ArrowUpRight,
-  type LucideIcon,
-} from 'lucide-react';
+import { Search, Wallet, AlertCircle, FileClock, Files, X, IdCard, Phone, CalendarDays, Stethoscope, FlaskConical, ArrowDownLeft, ArrowUpRight, type LucideIcon, MessageSquareText } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
-import { Button } from '@/components/ui/Button';
+import { Button, buttonVariants } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
+import { Segmented } from '@/components/ui/Segmented';
 import { useToast } from '@/components/ui/Toast';
 import { cn, formatPkr } from '@/lib/utils';
 import { INVOICE_STATUS } from '@/lib/status';
@@ -25,6 +24,9 @@ import {
   type InvoiceDetailDTO,
   type BillingSummaryDTO,
 } from '@/modules/billing/billing.actions';
+import { listPaymentAccountsAction, type PaymentAccountDTO } from '@/modules/accounts/accounts.actions';
+import { ChevronRight, Printer } from 'lucide-react';
+import { Tr } from '@/components/ui/Tr';
 
 type Filter = 'ALL' | 'DUE' | 'PAID';
 
@@ -50,6 +52,12 @@ export function BillingClient({
   const [loading, setLoading] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
 
+  // Other screens (a patient's history) link straight to one invoice.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('invoice');
+    if (id) setOpenId(id);
+  }, []);
+
   const load = useCallback((f: Filter, q?: string) => {
     setLoading(true);
     Promise.all([listInvoicesAction(f, q), getBillingSummaryAction()])
@@ -72,7 +80,7 @@ export function BillingClient({
   const methodLabel = (m: string | null) => (m ? t(`billing.method${m}`) : t('billing.methodNone'));
 
   return (
-    <div className="space-y-5">
+    <div className="page">
       <h1 className="text-2xl font-extrabold tracking-tight text-strong">{t('billing.title')}</h1>
 
       {/* Summary */}
@@ -85,19 +93,17 @@ export function BillingClient({
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex rounded-xl bg-surface-3 p-1">
-          {(['ALL', 'DUE', 'PAID'] as Filter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={cn('rounded-lg px-4 py-1.5 text-sm font-semibold transition-colors',
-                filter === f ? 'bg-surface text-brand-700 shadow-sm' : 'text-muted hover:text-body')}
-            >
-              {t(`billing.filter${f.charAt(0) + f.slice(1).toLowerCase()}`)}
-            </button>
-          ))}
+        <div className="w-full sm:w-72">
+          <Segmented
+            value={filter}
+            onChange={setFilter}
+            options={(['ALL', 'DUE', 'PAID'] as Filter[]).map((f) => ({
+              value: f,
+              label: t(`billing.filter${f.charAt(0) + f.slice(1).toLowerCase()}`),
+            }))}
+          />
         </div>
-        <div className="relative w-72">
+        <div className="relative w-full sm:w-72">
           <Search className="pointer-events-none absolute inset-y-0 start-0 my-auto ms-3 h-4 w-4 text-subtle" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('billing.search')} className="field ps-10" />
         </div>
@@ -161,7 +167,7 @@ export function BillingClient({
                       </td>
 
                       <td className="px-5 py-3.5 text-end">
-                        <span className="text-subtle transition-colors group-hover:text-brand-600">→</span>
+                        <ChevronRight className="h-4 w-4 text-subtle transition-colors group-hover:text-brand-600 rtl:rotate-180" />
                       </td>
                     </tr>
                   );
@@ -286,9 +292,14 @@ function InvoiceDrawer({
                   <div className="text-[11px] font-medium text-emerald-600">{t('billing.paid')}</div>
                   <div className="font-bold text-ok-text">{formatPkr(d.paid)}</div>
                 </div>
-                <div className={cn('rounded-xl px-3 py-2', d.balance > 0 ? 'bg-warn-soft' : 'bg-surface-3')}>
-                  <div className={cn('text-[11px] font-medium', d.balance > 0 ? 'text-amber-600' : 'text-muted')}>{t('billing.balance')}</div>
-                  <div className={cn('font-bold', d.balance > 0 ? 'text-warn-text' : 'text-muted')}>{formatPkr(d.balance)}</div>
+                {/* Money held beyond the bill — tests removed or the booking cancelled after payment. */}
+                <div className={cn('rounded-xl px-3 py-2', d.balance > 0 ? 'bg-warn-soft' : d.refundDue > 0 ? 'bg-danger-soft' : 'bg-surface-3')}>
+                  <div className={cn('text-[11px] font-medium', d.balance > 0 ? 'text-amber-600' : d.refundDue > 0 ? 'text-danger-text' : 'text-muted')}>
+                    {d.refundDue > 0 ? t('billing.refundDue') : t('billing.balance')}
+                  </div>
+                  <div className={cn('font-bold', d.balance > 0 ? 'text-warn-text' : d.refundDue > 0 ? 'text-danger-text' : 'text-muted')}>
+                    {formatPkr(d.refundDue > 0 ? d.refundDue : d.balance)}
+                  </div>
                 </div>
               </div>
             </div>
@@ -320,6 +331,15 @@ function InvoiceDrawer({
                 ))}
               </ul>
             </div>
+
+            {d.notes && (
+              <div className="rounded-2xl bg-info-soft p-4 text-sm text-info-text">
+                <div className="mb-1 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider">
+                  <MessageSquareText className="h-3.5 w-3.5" /> {t('reception.notes')}
+                </div>
+                <p className="whitespace-pre-wrap break-words">{d.notes}</p>
+              </div>
+            )}
 
             {/* Breakdown */}
             <div className="rounded-2xl bg-surface p-4 shadow-card">
@@ -372,6 +392,12 @@ function InvoiceDrawer({
           <div className="border-t border-line p-4">
             {mode === 'NONE' ? (
               <div className="flex gap-2">
+                {/* The slip doubles as the receipt: it now shows what was paid and what is still due. */}
+                {d.paid > 0 && (
+                  <Link href={`/reception/${d.visitId}`} className={buttonVariants({ variant: 'outline', className: 'flex-1' })}>
+                    <Printer className="h-4 w-4" /> {t('billing.printReceipt')}
+                  </Link>
+                )}
                 {d.balance > 0 && <Button className="flex-1" onClick={() => setMode('PAY')}>{t('billing.collect')}</Button>}
                 {canRefund && d.paid > 0 && (
                   <Button variant="outline" className="flex-1" onClick={() => setMode('REFUND')}>{t('billing.refund')}</Button>
@@ -424,8 +450,16 @@ function ActionForm({
 }: { mode: 'PAY' | 'REFUND'; invoiceId: string; maxAmount: number; onCancel: () => void; onDone: () => void }) {
   const { t } = useI18n();
   const [amount, setAmount] = useState(maxAmount);
-  const [method, setMethod] = useState('CASH');
+  // Which till or account the money goes into (or comes back out of).
+  const [accounts, setAccounts] = useState<PaymentAccountDTO[]>([]);
+  const [accountId, setAccountId] = useState('');
   const [reason, setReason] = useState('');
+  useEffect(() => {
+    listPaymentAccountsAction()
+      .then((a) => { setAccounts(a); setAccountId((cur) => cur || a[0]?.id || ''); })
+      .catch(() => setAccounts([]));
+  }, []);
+  const method = accounts.find((a) => a.id === accountId)?.method ?? 'CASH';
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -433,8 +467,8 @@ function ActionForm({
     setError(null);
     startTransition(async () => {
       const res = mode === 'PAY'
-        ? await recordPaymentAction({ invoiceId, amount, method })
-        : await issueRefundAction({ invoiceId, amount, reason: reason || undefined });
+        ? await recordPaymentAction({ invoiceId, amount, method, accountId: accountId || undefined })
+        : await issueRefundAction({ invoiceId, amount, reason: reason || undefined, accountId: accountId || undefined });
       if (res.ok) onDone();
       else setError(res.error);
     });
@@ -454,23 +488,18 @@ function ActionForm({
             className="field"
           />
         </div>
-        {mode === 'PAY' ? (
-          <div>
-            <span className="mb-1 block text-xs font-medium text-muted">{t('billing.method')}</span>
-            <Select value={method} onChange={setMethod} options={[
-              { value: 'CASH', label: t('billing.cash') },
-              { value: 'CARD', label: t('billing.card') },
-              { value: 'ONLINE', label: t('billing.online') },
-            ]} />
-          </div>
-        ) : (
-          <div>
-            <span className="mb-1 block text-xs font-medium text-muted">{t('billing.refundReason')}</span>
-            <input value={reason} onChange={(e) => setReason(e.target.value)} className="field" />
-          </div>
-        )}
+        <div>
+          <span className="mb-1 block text-xs font-medium text-muted">{t('billing.account')}</span>
+          <Select value={accountId} onChange={setAccountId} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
+        </div>
       </div>
-      {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger-text">{error}</p>}
+      {mode === 'REFUND' && (
+        <div>
+          <span className="mb-1 block text-xs font-medium text-muted">{t('billing.refundReason')}</span>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} className="field" />
+        </div>
+      )}
+      {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
       <div className="flex gap-2">
         <Button variant="ghost" onClick={onCancel}>{t('common.cancel')}</Button>
         <Button className="flex-1" onClick={submit} loading={isPending} disabled={amount <= 0}>

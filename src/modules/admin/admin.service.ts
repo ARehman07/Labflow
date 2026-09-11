@@ -1,11 +1,64 @@
 import bcrypt from 'bcryptjs';
 import { tenantDb, currentTenantId } from '@/core/db/context';
 import type { TenantTransactionClient } from '@/core/db/tenant';
-import type { TestInput, ParameterInput } from './admin.schema';
+import type { TestInput, ParameterInput, RangeInput } from './admin.schema';
+
+/** Ages are stored in days so a newborn and an adult compare with one operator. */
+export const DAYS_PER = { YEARS: 365, MONTHS: 30, DAYS: 1 } as const;
+/** "No upper age" — about 120 years, the schema's default. */
+export const MAX_AGE_DAYS = 43800;
 
 /** Extract variable names referenced by a formula expression. */
 function extractVars(expr: string): string[] {
   return [...new Set(expr.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [])];
+}
+
+async function writeRangesAndFormula(tx: TenantTransactionClient, parameterId: string, p: ParameterInput) {
+  // Several ranges per parameter — by sex and by age band — each with its own
+  // normal and critical limits. A payload from before ranges existed still
+  // arrives as a single refLow/refHigh/refText, and is saved as one range.
+  const legacy: RangeInput[] = p.refLow !== undefined || p.refHigh !== undefined || p.refText
+    ? [{ sex: 'ANY', ageUnit: 'YEARS', low: p.refLow, high: p.refHigh, text: p.refText }]
+    : [];
+  const ranges = p.ranges.length > 0 ? p.ranges : legacy;
+  for (const r of ranges) {
+    const empty = [r.ageMin, r.ageMax, r.low, r.high, r.criticalLow, r.criticalHigh, r.text].every((v) => v === undefined);
+    if (empty) continue;
+    const perUnit = DAYS_PER[r.ageUnit ?? 'YEARS'];
+    await tx.referenceRange.create({
+      data: { tenantId: await currentTenantId(),
+        parameterId,
+        sex: r.sex ?? 'ANY',
+        ageMinDays: r.ageMin !== undefined ? Math.round(r.ageMin * perUnit) : 0,
+        ageMaxDays: r.ageMax !== undefined ? Math.round(r.ageMax * perUnit) : MAX_AGE_DAYS,
+        low: r.low ?? null,
+        high: r.high ?? null,
+        criticalLow: r.criticalLow ?? null,
+        criticalHigh: r.criticalHigh ?? null,
+        displayText: r.text ?? null,
+      },
+    });
+  }
+  if (p.formula) {
+    await tx.parameterFormula.create({
+      data: { tenantId: await currentTenantId(), parameterId, expression: p.formula, inputs: JSON.stringify(extractVars(p.formula)) },
+    });
+  }
+}
+
+function parameterFields(p: ParameterInput, sortOrder: number) {
+  return {
+    name: p.name,
+    code: p.code,
+    unit: p.unit ?? null,
+    valueType: p.valueType,
+    options: p.options ?? null,
+    isBold: p.isBold,
+    cutoff: p.valueType === 'CUTOFF' ? (p.cutoff ?? null) : null,
+    positiveLabel: p.valueType === 'CUTOFF' ? (p.positiveLabel ?? null) : null,
+    negativeLabel: p.valueType === 'CUTOFF' ? (p.negativeLabel ?? null) : null,
+    sortOrder,
+  };
 }
 
 async function writeParameters(
@@ -16,33 +69,17 @@ async function writeParameters(
   for (let i = 0; i < parameters.length; i++) {
     const p = parameters[i];
     const param = await tx.testParameter.create({
-      data: { tenantId: await currentTenantId(),
-        testId,
-        name: p.name,
-        code: p.code,
-        unit: p.unit ?? null,
-        valueType: p.valueType,
-        options: p.options ?? null,
-        isBold: p.isBold,
-        sortOrder: i + 1,
-      },
+      data: { tenantId: await currentTenantId(), testId, ...parameterFields(p, i + 1) },
     });
-    if (p.refLow !== undefined || p.refHigh !== undefined || p.refText) {
-      await tx.referenceRange.create({
-        data: { tenantId: await currentTenantId(),
-          parameterId: param.id,
-          sex: 'ANY',
-          low: p.refLow ?? null,
-          high: p.refHigh ?? null,
-          displayText: p.refText ?? null,
-        },
-      });
-    }
-    if (p.formula) {
-      await tx.parameterFormula.create({
-        data: { tenantId: await currentTenantId(), parameterId: param.id, expression: p.formula, inputs: JSON.stringify(extractVars(p.formula)) },
-      });
-    }
+    await writeRangesAndFormula(tx, param.id, p);
+  }
+}
+
+/** Thrown when a parameter that already has results is removed from a test. */
+export class ParameterInUseError extends Error {
+  constructor(names: string[]) {
+    super(`A parameter that already has results cannot be removed: ${names.join(', ')}.`);
+    this.name = 'ParameterInUseError';
   }
 }
 
@@ -96,6 +133,8 @@ export const adminService = {
           departmentId: input.departmentId,
           tatHours: input.tatHours,
           specimenType: input.specimenType,
+          methodNote: input.methodNote ?? null,
+          reportFormat: input.reportFormat,
         },
       });
       await writeParameters(tx, test.id, input.parameters);
@@ -106,8 +145,16 @@ export const adminService = {
     });
   },
 
-  /** Update a test. Parameters are replaced; this fails (safely) if any existing
-   *  parameter already has results, protecting historical data. */
+  /**
+   * Update a test.
+   *
+   * Parameters are updated in place, matched by code, so results already
+   * recorded against them stay attached. They used to be deleted and
+   * recreated, which the database refused the moment any result existed — so
+   * a test that had ever been used could not have even a reference range
+   * corrected. Only a parameter removed from the test is deleted, and one that
+   * already has results is refused by name.
+   */
   async updateTest(id: string, input: TestInput, branchId: string) {
     return (await tenantDb()).$transaction(async (tx) => {
       await tx.test.update({
@@ -118,11 +165,42 @@ export const adminService = {
           departmentId: input.departmentId,
           tatHours: input.tatHours,
           specimenType: input.specimenType,
+          methodNote: input.methodNote ?? null,
+          reportFormat: input.reportFormat,
         },
       });
-      // Replace parameters (delete cascades ranges/formula; blocked by FK if results exist)
-      await tx.testParameter.deleteMany({ where: { testId: id } });
-      await writeParameters(tx, id, input.parameters);
+
+      const existing = await tx.testParameter.findMany({
+        where: { testId: id },
+        select: { id: true, code: true, name: true, _count: { select: { results: true } } },
+      });
+      const byCode = new Map(existing.map((e) => [e.code, e]));
+      const kept = new Set<string>();
+
+      for (let i = 0; i < input.parameters.length; i++) {
+        const p = input.parameters[i];
+        const match = byCode.get(p.code);
+        if (match) {
+          kept.add(match.id);
+          await tx.testParameter.update({ where: { id: match.id }, data: parameterFields(p, i + 1) });
+          await tx.referenceRange.deleteMany({ where: { parameterId: match.id } });
+          await tx.parameterFormula.deleteMany({ where: { parameterId: match.id } });
+          await writeRangesAndFormula(tx, match.id, p);
+        } else {
+          const created = await tx.testParameter.create({
+            data: { tenantId: await currentTenantId(), testId: id, ...parameterFields(p, i + 1) },
+          });
+          await writeRangesAndFormula(tx, created.id, p);
+        }
+      }
+
+      const removed = existing.filter((e) => !kept.has(e.id));
+      const withResults = removed.filter((e) => e._count.results > 0);
+      if (withResults.length > 0) throw new ParameterInUseError(withResults.map((e) => e.name));
+      if (removed.length > 0) {
+        await tx.testParameter.deleteMany({ where: { id: { in: removed.map((e) => e.id) } } });
+      }
+
       // Update / add current price
       await tx.testPrice.create({
         data: { tenantId: await currentTenantId(), testId: id, branchId, price: input.price, effectiveFrom: new Date() },

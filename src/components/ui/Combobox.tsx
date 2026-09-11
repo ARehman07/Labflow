@@ -21,6 +21,12 @@ interface ComboboxProps {
   emptyText?: string;
   minChars?: number;
   leftIcon?: React.ReactNode;
+  /**
+   * Enter pressed with nothing to pick. A barcode scanner types the whole code
+   * and presses Enter faster than a search can return, so the caller gets the
+   * raw text instead of the keystroke being lost.
+   */
+  onEnterEmpty?: (query: string) => void;
 }
 
 /**
@@ -38,6 +44,7 @@ export function Combobox({
   emptyText,
   minChars = 1,
   leftIcon,
+  onEnterEmpty,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -72,6 +79,11 @@ export function Combobox({
           placeholder={placeholder}
           className={cn('field', leftIcon ? 'ps-10' : '')}
           onKeyDown={(e) => {
+            if (e.key === 'Enter' && onEnterEmpty && (!showMenu || items.length === 0)) {
+              e.preventDefault();
+              onEnterEmpty(query);
+              return;
+            }
             if (!showMenu) return;
             if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, items.length - 1)); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react';
-import Link from 'next/link';
 import { Phone, Check } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button } from '@/components/ui/Button';
@@ -12,6 +11,9 @@ import {
   recordCriticalCallbacksAction,
   type CriticalCallbackDTO,
 } from '@/modules/lab/lab.actions';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { ListSkeleton } from '@/components/ui/Skeleton';
+import { Tr } from '@/components/ui/Tr';
 
 const METHODS = ['Phone', 'WhatsApp', 'In person'] as const;
 
@@ -117,21 +119,17 @@ export function CriticalClient() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-strong">{t('critical.title')}</h1>
-          <p className="mt-0.5 text-sm text-muted">{t('critical.intro')}</p>
-        </div>
-        <Link href="/lab" className="shrink-0">
-          <Button variant="ghost">← {t('lab.title')}</Button>
-        </Link>
-      </div>
+    <div className="page">
+      <PageHeader
+        title={t('critical.title')}
+        subtitle={t('critical.intro')}
+        back={{ href: '/lab', label: t('lab.title') }}
+      />
 
-      {error && <p className="note-danger">{error}</p>}
+      {error && <p className="note-danger"><Tr text={error} /></p>}
 
       {loading ? (
-        <p className="text-subtle">{t('common.loading')}</p>
+        <ListSkeleton rows={2} />
       ) : groups.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line bg-surface/60 py-16 text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-ok-soft text-ok-text">

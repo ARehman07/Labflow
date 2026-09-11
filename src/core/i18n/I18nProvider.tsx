@@ -3,16 +3,26 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import en from './messages/en.json';
 import ur from './messages/ur.json';
+import { MESSAGE_PATTERNS } from './patterns';
 
 export type Locale = 'en' | 'ur';
 type Messages = Record<string, string>;
 
 const DICTS: Record<Locale, Messages> = { en, ur };
 
+/** English sentence → key, so a message that arrives as text can still be translated. */
+const EN_INDEX = new Map(Object.entries(en as Messages).map(([k, v]) => [v, k]));
+
 interface I18nContextValue {
   locale: Locale;
   dir: 'ltr' | 'rtl';
   t: (key: string) => string;
+  /**
+   * Translate a message that arrived as English text — an error from the
+   * server, which does not know which language the person is reading in.
+   * Unknown text is returned unchanged rather than dropped.
+   */
+  tr: (message: string) => string;
   setLocale: (l: Locale) => void;
   toggle: () => void;
 }
@@ -53,8 +63,26 @@ export function I18nProvider({
     [locale],
   );
 
+  const tr = useCallback(
+    (message: string) => {
+      if (!message || locale === 'en') return message;
+      const key = EN_INDEX.get(message);
+      if (key) return DICTS[locale][key] ?? message;
+      for (const p of MESSAGE_PATTERNS) {
+        const m = message.match(p.re);
+        if (!m) continue;
+        let out = DICTS[locale][p.key];
+        if (!out) return message;
+        p.vars.forEach((v, i) => { out = out.replace(`{${v}}`, m[i + 1]); });
+        return out;
+      }
+      return message;
+    },
+    [locale],
+  );
+
   return (
-    <I18nContext.Provider value={{ locale, dir, t, setLocale, toggle }}>
+    <I18nContext.Provider value={{ locale, dir, t, tr, setLocale, toggle }}>
       {children}
     </I18nContext.Provider>
   );

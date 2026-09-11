@@ -3,7 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 import { Spinner } from './Spinner';
 
-const button = cva(
+export const buttonVariants = cva(
   // whitespace-nowrap + shrink-0: a button label must never wrap or be
   // squeezed by a greedy sibling (an input in a flex row will do exactly that).
   'btn inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap font-semibold transition-all duration-150 ease-out active:scale-[0.97] focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50',
@@ -30,7 +30,7 @@ const button = cva(
 
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof button> {
+    VariantProps<typeof buttonVariants> {
   loading?: boolean;
 }
 
@@ -39,7 +39,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       disabled={disabled || loading}
-      className={cn(button({ variant, size }), className)}
+      className={cn(buttonVariants({ variant, size }), className)}
       {...props}
     >
       {loading && <Spinner className="h-4 w-4" />}

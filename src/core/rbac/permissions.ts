@@ -67,11 +67,23 @@ export const PERMISSIONS = {
     code: 'commission.pay', label: 'Settle doctor commission', group: 'Money',
     note: 'Marks a payable as paid. Money leaving the lab.',
   },
+  PARTNER_MANAGE: {
+    code: 'partner.manage', label: 'Manage B2B partner labs', group: 'Money',
+    note: 'Partner lab accounts, the payments they make, and what they owe.',
+  },
 
   // ── Reporting ──
   REPORT_PRINT: { code: 'report.print', label: 'Print report', group: 'Reporting' },
   REPORT_DELIVER: { code: 'report.deliver', label: 'Deliver report', group: 'Reporting' },
   INSIGHTS_VIEW: { code: 'insights.view', label: 'View dashboards', group: 'Reporting' },
+  B2B_PORTAL: {
+    code: 'b2b.portal', label: 'Partner lab portal', group: 'Reporting',
+    note: 'Only for a partner lab’s own login: its bookings, reports and statement.',
+  },
+  DOCTOR_PORTAL: {
+    code: 'doctor.portal', label: 'Doctor portal', group: 'Reporting',
+    note: 'Only for a referring doctor’s own login: their patients’ reports.',
+  },
 
   // ── Administration ──
   ADMIN_MANAGE: { code: 'admin.manage', label: 'Manage catalogue & branches', group: 'Administration' },
@@ -106,7 +118,7 @@ export const DEFAULT_ROLES: Record<string, PermissionCode[]> = {
     'visit.create', 'visit.modify', 'visit.cancel', 'patient.manage',
     'sample.collect', 'result.enter', 'result.approve', 'workflow.advance',
     'critical.manage', 'notifiable.manage',
-    'billing.view', 'payment.receive', 'finance.view',
+    'billing.view', 'payment.receive', 'finance.view', 'partner.manage',
     'report.print', 'report.deliver', 'insights.view',
   ],
 

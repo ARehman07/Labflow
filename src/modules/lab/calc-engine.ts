@@ -1,7 +1,7 @@
 import { evaluateExpression } from './expression';
 
 export type ResultFlag = 'NORMAL' | 'HIGH' | 'LOW' | 'CRITICAL';
-export type ParamValueType = 'NUMBER' | 'TEXT' | 'OPTION' | 'CALCULATED';
+export type ParamValueType = 'NUMBER' | 'TEXT' | 'OPTION' | 'CALCULATED' | 'CUTOFF';
 
 export interface ReferenceRangeDef {
   sex: 'ANY' | 'MALE' | 'FEMALE';
@@ -46,6 +46,8 @@ export interface ParameterDef {
   sortOrder: number;
   referenceRanges: ReferenceRangeDef[];
   formula: { expression: string; inputs: string[] } | null;
+  /** CUTOFF parameters: at or above this the result reads positive. */
+  cutoff?: number | null;
 }
 
 export interface PatientContext {
@@ -109,6 +111,27 @@ export function flagValue(value: number | null, range: ReferenceRangeDef | null)
   return 'NORMAL';
 }
 
+/**
+ * A screening value read against its cut-off (serology: HBsAg, anti-HCV, HIV).
+ * At or above the cut-off the result is positive, flagged HIGH so it counts
+ * as abnormal everywhere a flag is counted.
+ */
+export function cutoffFlag(value: number | null, cutoff: number | null | undefined): ResultFlag {
+  if (value === null || Number.isNaN(value) || cutoff == null) return 'NORMAL';
+  return value >= cutoff ? 'HIGH' : 'NORMAL';
+}
+
+/** The word printed beside a cut-off result: "Reactive" / "Non-reactive" unless the test says otherwise. */
+export function interpretCutoff(
+  value: number | null,
+  cutoff: number | null | undefined,
+  positiveLabel?: string | null,
+  negativeLabel?: string | null,
+): string | null {
+  if (value === null || Number.isNaN(value) || cutoff == null) return null;
+  return value >= cutoff ? (positiveLabel || 'Reactive') : (negativeLabel || 'Non-reactive');
+}
+
 /** True when the flag warrants an immediate callback to the clinician. */
 export function isCritical(flag: ResultFlag): boolean {
   return flag === 'CRITICAL';
@@ -137,7 +160,7 @@ export function computeResultSet(
   for (const p of ordered) {
     if (p.valueType === 'CALCULATED') continue;
     const raw = (rawByCode[p.code] ?? '').trim();
-    if (p.valueType === 'NUMBER' && raw !== '') {
+    if ((p.valueType === 'NUMBER' || p.valueType === 'CUTOFF') && raw !== '') {
       const n = Number(raw);
       if (!Number.isNaN(n)) numericContext[p.code] = n;
     }
@@ -170,7 +193,7 @@ export function computeResultSet(
       });
     } else {
       const raw = (rawByCode[p.code] ?? '').trim();
-      const numeric = p.valueType === 'NUMBER' && raw !== '' ? Number(raw) : null;
+      const numeric = (p.valueType === 'NUMBER' || p.valueType === 'CUTOFF') && raw !== '' ? Number(raw) : null;
       results.push({
         parameterId: p.id,
         code: p.code,
@@ -179,7 +202,9 @@ export function computeResultSet(
         flag:
           p.valueType === 'NUMBER'
             ? flagValue(numeric, pickRange(p.referenceRanges, patient))
-            : 'NORMAL',
+            : p.valueType === 'CUTOFF'
+              ? cutoffFlag(numeric !== null && !Number.isNaN(numeric) ? numeric : null, p.cutoff)
+              : 'NORMAL',
         isCalculated: false,
       });
     }

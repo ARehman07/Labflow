@@ -22,17 +22,44 @@ export const userSchema = z.object({
   branchId: z.string().optional().or(z.literal('').transform(() => undefined)),
 });
 
+/**
+ * An optional number from a form box. The empty-string branch must come first:
+ * z.coerce.number() turns "" into 0 and succeeds, so the other order silently
+ * saved every blank Low/High as a limit of 0.
+ */
+const optionalNumber = z.union([z.literal('').transform(() => undefined), z.coerce.number()]).optional();
+
+/** One reference range: who it applies to, and the limits for them. */
+const rangeSchema = z.object({
+  sex: z.enum(['ANY', 'MALE', 'FEMALE']).default('ANY'),
+  ageMin: optionalNumber,
+  ageMax: optionalNumber,
+  ageUnit: z.enum(['YEARS', 'MONTHS', 'DAYS']).default('YEARS'),
+  low: optionalNumber,
+  high: optionalNumber,
+  criticalLow: optionalNumber,
+  criticalHigh: optionalNumber,
+  text: z.string().max(200).optional().or(z.literal('').transform(() => undefined)),
+});
+export type RangeInput = z.infer<typeof rangeSchema>;
+
 const parameterSchema = z.object({
   name: z.string().min(1).max(120),
   code: z.string().min(1).max(30).regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'Code: letter first, then letters/numbers/_'),
   unit: z.string().max(30).optional().or(z.literal('').transform(() => undefined)),
-  valueType: z.enum(['NUMBER', 'TEXT', 'OPTION', 'CALCULATED']),
+  valueType: z.enum(['NUMBER', 'TEXT', 'OPTION', 'CALCULATED', 'CUTOFF']),
+  /** CUTOFF only: at or above reads positive. */
+  cutoff: optionalNumber,
+  positiveLabel: z.string().max(40).optional().or(z.literal('').transform(() => undefined)),
+  negativeLabel: z.string().max(40).optional().or(z.literal('').transform(() => undefined)),
   options: z.string().max(200).optional().or(z.literal('').transform(() => undefined)),
   isBold: z.boolean().default(false),
-  refLow: z.union([z.coerce.number(), z.literal('').transform(() => undefined)]).optional(),
-  refHigh: z.union([z.coerce.number(), z.literal('').transform(() => undefined)]).optional(),
+  refLow: optionalNumber,
+  refHigh: optionalNumber,
   refText: z.string().max(200).optional().or(z.literal('').transform(() => undefined)),
   formula: z.string().max(200).optional().or(z.literal('').transform(() => undefined)),
+  /** Every range for this parameter. When empty, refLow/refHigh/refText are used as a single range. */
+  ranges: z.array(rangeSchema).max(20).default([]),
 });
 
 export const testSchema = z.object({
@@ -42,7 +69,14 @@ export const testSchema = z.object({
   tatHours: z.coerce.number().int().min(1).max(720).default(24),
   specimenType: z.enum(['BLOOD', 'SERUM', 'PLASMA', 'URINE', 'STOOL', 'SWAB', 'OTHER']).default('BLOOD'),
   price: z.coerce.number().min(0).default(0),
-  parameters: z.array(parameterSchema).min(1, 'Add at least one parameter'),
+  /** Printed under the results: analyzer, method, reagent. */
+  methodNote: z.string().trim().max(300).transform((s) => s || null).nullable().optional(),
+  /** STANDARD (parameters) or CULTURE (organism and antibiotic sensitivity). */
+  reportFormat: z.enum(['STANDARD', 'CULTURE']).default('STANDARD'),
+  parameters: z.array(parameterSchema).max(200),
+}).refine((t) => t.reportFormat === 'CULTURE' || t.parameters.length > 0, {
+  message: 'Add at least one parameter',
+  path: ['parameters'],
 });
 export type TestInput = z.infer<typeof testSchema>;
 export type ParameterInput = z.infer<typeof parameterSchema>;

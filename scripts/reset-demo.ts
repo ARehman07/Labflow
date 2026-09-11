@@ -16,6 +16,7 @@
  * Run: npm run db:demo    (safe to re-run)
  */
 import { PrismaClient, type Prisma } from '@prisma/client';
+import { computeResultSet, ageInDays, type AgeUnit, type ParameterDef } from '../src/modules/lab/calc-engine';
 
 const prisma = new PrismaClient();
 
@@ -278,35 +279,61 @@ async function main() {
   });
 
   // ── 5. Results ──────────────────────────────────────────────────────────
+  /**
+   * Results go through the same calculation engine the result-entry screen
+   * uses, so calculated parameters (LDL, ratios) are filled in and every flag
+   * is judged against the right age/sex range. Writing raw values directly
+   * left calculated rows blank — which then printed as "—" on a released
+   * demo report.
+   */
   async function setResults(visitId: string, values: Record<string, string>, approve: boolean) {
     const lines = await prisma.orderLine.findMany({
       where: { visitId },
-      include: { test: { include: { parameters: { include: { referenceRanges: true } } } } },
+      include: {
+        visit: { include: { patient: true } },
+        test: { include: { parameters: { include: { referenceRanges: true, formula: true } } } },
+      },
     });
     for (const line of lines) {
-      for (const param of line.test.parameters) {
-        const raw = values[param.code];
-        if (raw === undefined) continue;
-        const num = Number(raw);
-        const range = param.referenceRanges[0];
-        let flag: NonNullable<Prisma.ResultValueUncheckedCreateInput['flag']> = 'NORMAL';
-        if (range && !Number.isNaN(num)) {
-          const cLow = range.criticalLow != null ? Number(range.criticalLow) : null;
-          const cHigh = range.criticalHigh != null ? Number(range.criticalHigh) : null;
-          const low = range.low != null ? Number(range.low) : null;
-          const high = range.high != null ? Number(range.high) : null;
-          if ((cHigh != null && num >= cHigh) || (cLow != null && num <= cLow)) flag = 'CRITICAL';
-          else if (high != null && num > high) flag = 'HIGH';
-          else if (low != null && num < low) flag = 'LOW';
-        }
+      if (!line.test.parameters.some((p) => values[p.code] !== undefined)) continue;
+
+      const params: ParameterDef[] = line.test.parameters.map((p) => ({
+        id: p.id,
+        code: p.code,
+        name: p.name,
+        unit: p.unit,
+        valueType: p.valueType as ParameterDef['valueType'],
+        sortOrder: p.sortOrder,
+        referenceRanges: p.referenceRanges.map((r) => ({
+          sex: r.sex as 'ANY' | 'MALE' | 'FEMALE',
+          ageMinDays: r.ageMinDays,
+          ageMaxDays: r.ageMaxDays,
+          low: r.low === null ? null : Number(r.low),
+          high: r.high === null ? null : Number(r.high),
+          criticalLow: r.criticalLow === null ? null : Number(r.criticalLow),
+          criticalHigh: r.criticalHigh === null ? null : Number(r.criticalHigh),
+          displayText: r.displayText,
+        })),
+        formula: p.formula ? { expression: p.formula.expression, inputs: [] } : null,
+      }));
+
+      const patient = line.visit.patient;
+      const computed = computeResultSet(params, values, {
+        ageDays: ageInDays(patient as { dateOfBirth: Date | null; age: number | null; ageUnit: AgeUnit | null }),
+        sex: patient.sex as 'MALE' | 'FEMALE' | 'OTHER' | null,
+      });
+
+      for (const c of computed) {
+        if (c.value == null || c.value === '') continue;
         await prisma.resultValue.create({
           data: {
             tenantId,
             orderLineId: line.id,
-            parameterId: param.id,
-            value: raw,
-            numericValue: Number.isNaN(num) ? null : num,
-            flag,
+            parameterId: c.parameterId,
+            value: c.value,
+            numericValue: c.numericValue,
+            flag: c.flag as NonNullable<Prisma.ResultValueUncheckedCreateInput['flag']>,
+            isCalculated: c.isCalculated,
             enteredById: staff.id,
             createdAt: at(3),
             ...(approve ? { approvedById: owner.id, approvedAt: at(2) } : {}),

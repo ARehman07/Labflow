@@ -6,6 +6,15 @@ function startOfToday(): Date {
   return d;
 }
 
+/** How far back the Lab board looks (see getWorkboardAction). Kept in step. */
+export const LAB_BOARD_DAYS = 30;
+
+function startOfDaysAgo(days: number): Date {
+  const d = startOfToday();
+  d.setDate(d.getDate() - days);
+  return d;
+}
+
 export interface QueueTokenRow {
   id: string;
   number: number;
@@ -14,13 +23,35 @@ export interface QueueTokenRow {
 }
 
 export const queueService = {
-  async list(branchId: string): Promise<{ tokens: QueueTokenRow[]; nowServing: number | null }> {
+  async list(branchId: string): Promise<{
+    tokens: QueueTokenRow[];
+    nowServing: number | null;
+    earlierAwaitingCollection: number;
+  }> {
     const today = startOfToday();
-    const tokens = await (await tenantDb()).queueToken.findMany({
-      where: { at: { gte: today }, visit: { branchId } },
-      include: { visit: { include: { patient: true } } },
-      orderBy: { number: 'asc' },
-    });
+    const db = await tenantDb();
+    const [tokens, earlierAwaitingCollection] = await Promise.all([
+      db.queueToken.findMany({
+        where: { at: { gte: today }, visit: { branchId } },
+        include: { visit: { include: { patient: true } } },
+        orderBy: { number: 'asc' },
+      }),
+      // The queue is today's waiting room: token numbers restart at #1 each
+      // morning, so an older token cannot sit on the board beside today's #1.
+      // But a patient booked on an earlier day who still has a sample to give
+      // is real work, and it used to vanish from this screen while staying on
+      // the Lab board. Counted exactly as the Lab board's "To collect" list is
+      // built — same window, BOOKED lines only — because the note links there
+      // and the two numbers must agree. Retakes show under "In progress" on
+      // that board, so they are not counted here either.
+      db.visit.count({
+        where: {
+          branchId,
+          bookedAt: { gte: startOfDaysAgo(LAB_BOARD_DAYS), lt: today },
+          orderLines: { some: { status: 'BOOKED' } },
+        },
+      }),
+    ]);
     const called = [...tokens].reverse().find((t) => t.status === 'CALLED');
     return {
       tokens: tokens.map((t) => ({
@@ -30,6 +61,7 @@ export const queueService = {
         status: t.status,
       })),
       nowServing: called ? called.number : null,
+      earlierAwaitingCollection,
     };
   },
 

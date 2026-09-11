@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/core/i18n/I18nProvider';
-import { FileText } from 'lucide-react';
+import { ArrowLeft, ArrowRight, FileDown, FileText, History } from 'lucide-react';
+import { exportReport, reportFileName } from '@/lib/report-export';
 import { Button } from '@/components/ui/Button';
 import { AuthShell } from '@/components/layout/AuthShell';
 import { ReportDocument } from '@/components/report/ReportDocument';
@@ -14,6 +15,7 @@ import {
 } from '@/modules/portal/portal.actions';
 import type { PortalReportSummary } from '@/modules/portal/portal.service';
 import type { ReportData } from '@/modules/reporting/report.types';
+import { Tr } from '@/components/ui/Tr';
 
 type Step = 'MOBILE' | 'OTP' | 'LIST' | 'REPORT';
 
@@ -21,6 +23,13 @@ export function PortalClient() {
   const { t } = useI18n();
   const [step, setStep] = useState<Step>('MOBILE');
   const [labCode, setLabCode] = useState('');
+
+  // The QR on a booking slip opens this page as /portal?lab=CODE, so the
+  // patient only has to type their own number. Read once, after mount.
+  useEffect(() => {
+    const fromLink = new URLSearchParams(window.location.search).get('lab');
+    if (fromLink) setLabCode(fromLink);
+  }, []);
   const [mobile, setMobile] = useState('');
   const [devCode, setDevCode] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -49,6 +58,19 @@ export function PortalClient() {
       setStep('LIST');
     });
 
+  // A patient keeps their own copy: history on request, and a PDF named after the slip.
+  const [portalHistory, setPortalHistory] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const reportBox = useRef<HTMLDivElement>(null);
+  const savePdf = async () => {
+    const el = reportBox.current?.querySelector<HTMLElement>('.report-sheet');
+    if (!el || !report) return;
+    setSaving(true);
+    try { await exportReport(el, reportFileName(report.slipNo, report.mrNo), 'pdf'); }
+    catch { setError(t('report.exportFailed')); }
+    finally { setSaving(false); }
+  };
+
   const openReport = (visitId: string) =>
     startTransition(async () => {
       const data = await getPortalReportAction(token, visitId);
@@ -59,8 +81,21 @@ export function PortalClient() {
     return (
       <div className="min-h-screen bg-surface-2 px-4 py-6">
         <div className="mx-auto max-w-3xl">
-          <Button variant="ghost" className="no-print mb-3" onClick={() => setStep('LIST')}>← {t('portal.back')}</Button>
-          <ReportDocument data={report} />
+          <div className="no-print mb-3 flex flex-wrap items-center gap-2">
+            <Button variant="ghost" onClick={() => setStep('LIST')}><ArrowLeft className="h-4 w-4 rtl:rotate-180" /> {t('portal.back')}</Button>
+            <span className="flex-1" />
+            {report.hasHistory && (
+              <Button variant={portalHistory ? 'primary' : 'outline'} size="sm" aria-pressed={portalHistory} onClick={() => setPortalHistory((v) => !v)}>
+                <History className="h-3.5 w-3.5" /> {t('report.withHistory')}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" loading={saving} onClick={savePdf}>
+              <FileDown className="h-3.5 w-3.5" /> {t('report.downloadPdf')}
+            </Button>
+          </div>
+          <div ref={reportBox}>
+            <ReportDocument data={report} withHistory={portalHistory} />
+          </div>
         </div>
       </div>
     );
@@ -75,7 +110,7 @@ export function PortalClient() {
               <input
                 value={labCode}
                 onChange={(e) => setLabCode(e.target.value)}
-                placeholder="arfagma"
+                placeholder={t('portal.labCodePlaceholder')}
                 autoCapitalize="none"
                 spellCheck={false}
                 className="field"
@@ -93,7 +128,7 @@ export function PortalClient() {
               />
               <p className="mt-1.5 text-xs text-subtle">{t('portal.codeHint')}</p>
             </div>
-            {error && <p className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text">{error}</p>}
+            {error && <p className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
             <Button size="lg" className="w-full" onClick={sendCode} loading={isPending} disabled={mobile.trim().length < 11 || labCode.trim().length < 2}>
               {t('portal.sendCode')}
             </Button>
@@ -118,7 +153,7 @@ export function PortalClient() {
                 className="field text-center text-2xl font-bold tracking-[0.5em]"
               />
             </div>
-            {error && <p className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text">{error}</p>}
+            {error && <p className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
             <Button size="lg" className="w-full" onClick={verify} loading={isPending} disabled={code.length < 4}>
               {t('portal.viewReports')}
             </Button>
@@ -156,7 +191,7 @@ export function PortalClient() {
 
         <div className="mt-6 border-t border-line pt-4 text-center">
           <Link href="/login" className="text-xs font-medium text-subtle hover:text-brand-600">
-            {t('portal.staffLogin')} →
+            {t('portal.staffLogin')} <ArrowRight className="inline h-3.5 w-3.5 rtl:rotate-180" />
           </Link>
         </div>
     </AuthShell>

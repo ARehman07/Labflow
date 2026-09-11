@@ -28,7 +28,7 @@ export function InsightsClient({ data }: { data: DashboardData }) {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="page">
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight text-strong">{t('insights.title')}</h1>
         <p className="mt-0.5 text-sm text-muted">{t('insights.subtitle')}</p>

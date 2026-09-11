@@ -12,6 +12,10 @@ import { Card } from '@/components/ui/Card';
 import { ACCENT, RailGroup } from '@/components/ui/List';
 import { formatPkr, cn } from '@/lib/utils';
 import type { DashboardData, CriticalPreview } from '@/modules/insights/insights.actions';
+import { Droplet, Ticket } from 'lucide-react';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { buttonVariants } from '@/components/ui/Button';
+import type { MyWork } from '@/modules/dashboard/mywork.actions';
 
 /**
  * Answers two questions — what needs me now, and how is today going — while
@@ -31,45 +35,94 @@ function waitedFor(iso: string): string {
 }
 
 export function DashboardClient({
-  userName, data, permissions = [],
+  userName, data, permissions = [], myWork = null,
 }: {
   userName: string;
   data: DashboardData | null;
   permissions?: string[];
+  myWork?: MyWork | null;
 }) {
   const { t } = useI18n();
 
-  // Someone without insights.view gets no figures — revenue is not theirs to
-  // see. An empty page is not the answer: give them the doors they can open.
+  // Someone without insights.view gets no revenue figures — that is not theirs
+  // to see. But four shortcut tiles that repeat the menu told them nothing
+  // either. What they need on arrival is their own work: what is waiting for
+  // them, at their branch, now — each card a door straight into it.
   if (!data) {
     const has = (p: string) => permissions.includes(p);
-    const shortcuts = [
-      { show: has('visit.create'), href: '/reception', label: t('nav.newBooking'), icon: FilePlus2, hint: t('dashboard.scBooking') },
-      { show: has('sample.collect') || has('result.enter') || has('workflow.advance'), href: '/lab', label: t('nav.lab'), icon: FlaskConical, hint: t('dashboard.scLab') },
-      { show: has('patient.manage'), href: '/family-cards', label: t('nav.familyCards'), icon: CreditCard, hint: t('dashboard.scCards') },
-      { show: has('billing.view'), href: '/billing', label: t('nav.billing'), icon: Receipt, hint: t('dashboard.scBilling') },
-    ].filter((s) => s.show);
+    const w = myWork;
+    const cards = w ? [
+      w.toCollectPatients != null && {
+        key: 'collect', href: '/lab?stage=COLLECT', icon: Droplet, count: w.toCollectPatients,
+        label: t('mywork.toCollect'),
+        sub: t('mywork.testsN').replace('{n}', String(w.toCollectTests ?? 0)),
+      },
+      w.inLab != null && {
+        key: 'lab', href: '/lab?stage=PROGRESS', icon: FlaskConical, count: w.inLab,
+        label: t('mywork.inLab'), sub: t('mywork.inLabHint'),
+      },
+      w.toApprove != null && {
+        key: 'approve', href: '/lab/approvals', icon: ShieldCheck, count: w.toApprove,
+        label: t('alerts.approvals'), sub: t('mywork.approveHint'),
+      },
+      w.queueWaiting != null && {
+        key: 'queue', href: '/queue', icon: Ticket, count: w.queueWaiting,
+        label: t('mywork.queue'), sub: t('mywork.queueHint'),
+      },
+      w.duesCount != null && {
+        key: 'dues', href: '/billing', icon: Receipt, count: w.duesCount,
+        label: t('dashboard.duesOpen'), sub: formatPkr(w.duesAmount ?? 0),
+      },
+    ].filter(Boolean) as { key: string; href: string; icon: typeof Droplet; count: number; label: string; sub: string }[] : [];
+    const allClear = cards.length > 0 && cards.every((c) => c.count === 0);
 
     return (
-      <div className="mx-auto max-w-3xl space-y-5">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-strong">{t('dashboard.title')}</h1>
-          <p className="text-muted">{t('dashboard.welcome')}, {userName}</p>
-        </div>
-        {shortcuts.length > 0 && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {shortcuts.map((s) => (
-              <Link key={s.href} href={s.href} className="group card card-hover flex items-start gap-3 p-5">
-                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-600 transition-colors group-hover:bg-brand-500/20 dark:text-brand-300">
-                  <s.icon className="h-5 w-5" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block font-bold text-body">{s.label}</span>
-                  <span className="block text-sm text-muted">{s.hint}</span>
-                </span>
-              </Link>
-            ))}
-          </div>
+      <div className="page">
+        <PageHeader
+          title={t('dashboard.title')}
+          subtitle={`${t('dashboard.welcome')}, ${userName}`}
+          actions={has('visit.create') ? (
+            <Link href="/reception" className={buttonVariants()}>
+              <FilePlus2 className="h-4 w-4" /> {t('nav.newBooking')}
+            </Link>
+          ) : undefined}
+        />
+
+        {allClear && (
+          <Card className="flex items-center gap-3 p-4">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-ok-soft text-ok-text">
+              <CheckCircle2 className="h-5 w-5" />
+            </span>
+            <p className="font-medium text-body">{t('mywork.allClear')}</p>
+          </Card>
+        )}
+
+        {cards.length > 0 && (
+          <section>
+            <h2 className="section-title mb-2">{t('mywork.title')}</h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {cards.map((c) => (
+                <Link
+                  key={c.key}
+                  href={c.href}
+                  className={cn('group card card-hover flex items-center gap-4 p-4', c.count === 0 && 'opacity-70')}
+                >
+                  <span className={cn('grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-colors',
+                    c.count > 0 ? 'bg-brand-500/10 text-brand-600 dark:text-brand-300' : 'bg-surface-3 text-subtle')}>
+                    <c.icon className="h-5 w-5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-body">{c.label}</span>
+                    <span className="block truncate text-xs text-muted">{c.sub}</span>
+                  </span>
+                  <span className={cn('text-3xl font-extrabold tabular-nums', c.count > 0 ? 'text-strong' : 'text-subtle')}>
+                    {c.count}
+                  </span>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-subtle transition-transform group-hover:translate-x-0.5 rtl:rotate-180" />
+                </Link>
+              ))}
+            </div>
+          </section>
         )}
       </div>
     );

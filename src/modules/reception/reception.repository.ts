@@ -11,6 +11,7 @@ export const receptionRepository = {
               { mrNo: { contains: q } },
               { fullName: { contains: q } },
               { mobile: { contains: q } },
+              ...(/^[\d-]{5,15}$/u.test(q) ? [{ cnic: { contains: q.replace(/-/g, '') } }] : []),
             ],
           }
         : {},
@@ -36,11 +37,22 @@ export const receptionRepository = {
       where: { id: visitId },
       include: {
         patient: true,
-        branch: { include: { tenant: { select: { name: true, tagline: true, logoDataUrl: true, licenseNo: true, email: true } } } },
+        branch: { include: { tenant: { select: { code: true, name: true, tagline: true, logoDataUrl: true, licenseNo: true, email: true } } } },
         doctor: true,
         createdBy: true,
-        orderLines: { include: { test: true } },
-        invoice: true,
+        orderLines: { include: { test: true, package: { select: { name: true } } }, orderBy: { createdAt: 'asc' } },
+        collectionPoint: { select: { name: true } },
+        rateGroup: { select: { name: true } },
+        // The authoriser is printed on the slip, so a care-of discount is
+        // answerable from the paper the patient walks out with.
+        invoice: {
+          include: {
+            careOfUser: { select: { fullName: true } },
+            familyCard: { select: { discountPct: true } },
+            payments: { select: { method: true } },
+          },
+        },
+        token: { select: { number: true } },
       },
     });
   },

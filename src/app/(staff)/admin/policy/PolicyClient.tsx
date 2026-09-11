@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, Info, CreditCard, ShieldCheck } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
+import { CreditCard, ShieldCheck } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { SectionHeading, ACCENT } from '@/components/ui/List';
 import { useToast } from '@/components/ui/Toast';
 import { cn, formatPkr } from '@/lib/utils';
 import { updateLabPolicyAction, type LabPolicy } from '@/modules/settings/settings.actions';
+import { SaveBar } from '@/components/ui/SaveBar';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { useI18n } from '@/core/i18n/I18nProvider';
+import { Tr } from '@/components/ui/Tr';
 
 /**
  * The commercial dials for the whole lab. Every control shows what it does to a
@@ -16,6 +18,7 @@ import { updateLabPolicyAction, type LabPolicy } from '@/modules/settings/settin
  * a slip — and getting these wrong is charging every patient the wrong amount.
  */
 export function PolicyClient({ initial }: { initial: LabPolicy }) {
+  const { t } = useI18n();
   const toast = useToast();
   const [p, setP] = useState<LabPolicy>(initial);
   const [saved, setSaved] = useState<LabPolicy>(initial);
@@ -34,7 +37,7 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
         familyCardDiscountOnIssue: p.familyCardDiscountOnIssue,
         allowSelfVerify: p.allowSelfVerify,
       });
-      if (res.ok) { setP(res.policy); setSaved(res.policy); toast('success', 'Lab policy updated'); }
+      if (res.ok) { setP(res.policy); setSaved(res.policy); toast('success', t('policy.updated')); }
       else { setError(res.error); toast('error', res.error); }
     });
   }
@@ -45,24 +48,20 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
   const discount = Math.round((sample * p.familyCardDiscountPct) / 100);
 
   return (
-    <div className="mx-auto max-w-2xl space-y-5">
-      <div className="flex items-center gap-2">
-        <Link href="/admin"><Button variant="ghost"><ArrowLeft className="h-4 w-4" /></Button></Link>
-        <div>
-          <h1 className="text-xl font-extrabold tracking-tight text-strong">Lab policy</h1>
-          <p className="text-sm text-muted">
-            Applies to every branch of {p.tenantName}. Staff use these rates; only you can change them.
-          </p>
-        </div>
-      </div>
+    <div className="page">
+      <PageHeader
+        title={t('policy.title')}
+        subtitle={t('policy.subtitle').replace('{lab}', p.tenantName)}
+        back={{ href: '/admin', label: t('admin.title') }}
+      />
 
       <Card className="p-5">
-        <SectionHeading accent={ACCENT.brand}>Family card</SectionHeading>
+        <SectionHeading accent={ACCENT.brand}>{t('policy.familyCard')}</SectionHeading>
 
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <Field
-            label="Discount"
-            hint="Off every test, for everyone on the card."
+            label={t('policy.discount')}
+            hint={t('policy.discountHint')}
             suffix="%"
             value={p.familyCardDiscountPct}
             min={0}
@@ -70,16 +69,16 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
             onChange={(v) => setP({ ...p, familyCardDiscountPct: v })}
           />
           <Field
-            label="Joining fee"
-            hint="Charged once, when the card is created. Never discounted."
+            label={t('policy.fee')}
+            hint={t('policy.feeHint')}
             prefix="Rs"
             value={p.familyCardFee}
             min={0}
             onChange={(v) => setP({ ...p, familyCardFee: v })}
           />
           <Field
-            label="People per card"
-            hint="Including the card holder. Members can never be removed."
+            label={t('policy.cap')}
+            hint={t('policy.capHint')}
             value={p.familyCardMemberCap}
             min={1}
             max={50}
@@ -91,65 +90,63 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
         <Toggle
           className="mt-4"
           icon={CreditCard}
-          label="Discount applies on the slip that creates the card"
+          label={t('policy.onIssue')}
           on={p.familyCardDiscountOnIssue}
           onChange={(v) => setP({ ...p, familyCardDiscountOnIssue: v })}
-          onText="The patient saves today, which makes the card easy to sell at the counter."
-          offText="The card is paid for today; the saving starts from the next visit."
+          onText={t('policy.onIssueOn')}
+          offText={t('policy.onIssueOff')}
         />
 
         {/* What the numbers above actually do to a bill. */}
         <div className="mt-4 rounded-xl bg-surface-2 p-4">
           <div className="text-[11px] font-bold uppercase tracking-wider text-subtle">
-            A {formatPkr(sample)} bill, on the day the card is bought
+            {t('policy.example').replace('{amount}', formatPkr(sample))}
           </div>
           <dl className="mt-2 space-y-1 text-sm">
-            <Line label="Tests" value={formatPkr(sample)} />
+            <Line label={t('policy.tests')} value={formatPkr(sample)} />
             <Line
-              label={`Card discount (${p.familyCardDiscountPct}%)`}
+              label={t('policy.cardDiscount').replace('{pct}', String(p.familyCardDiscountPct))}
               value={p.familyCardDiscountOnIssue ? `− ${formatPkr(discount)}` : formatPkr(0)}
               muted={!p.familyCardDiscountOnIssue}
             />
-            <Line label="Joining fee" value={`+ ${formatPkr(p.familyCardFee)}`} />
+            <Line label={t('policy.fee')} value={`+ ${formatPkr(p.familyCardFee)}`} />
             <div className="!mt-2 flex justify-between border-t border-dashed border-line pt-2 font-bold text-strong">
-              <dt>Patient pays</dt>
+              <dt>{t('policy.patientPays')}</dt>
               <dd className="tabular-nums">
                 {formatPkr(sample - (p.familyCardDiscountOnIssue ? discount : 0) + p.familyCardFee)}
               </dd>
             </div>
           </dl>
           <p className="mt-2 text-xs text-subtle">
-            Every later visit: {formatPkr(sample)} becomes {formatPkr(sample - discount)}.
+            {t('policy.later').replace('{amount}', formatPkr(sample)).replace('{after}', formatPkr(sample - discount))}
           </p>
         </div>
       </Card>
 
       <Card className="p-5">
-        <SectionHeading accent={ACCENT.amber}>Result safety</SectionHeading>
+        <SectionHeading accent={ACCENT.amber}>{t('policy.safety')}</SectionHeading>
         <Toggle
           className="mt-3"
           icon={ShieldCheck}
-          label="Allow the person who entered a result to approve it"
+          label={t('policy.selfVerify')}
           on={p.allowSelfVerify}
           onChange={(v) => setP({ ...p, allowSelfVerify: v })}
-          onText="Faster when one person covers a shift alone, but nobody checks their work."
-          offText="A second pair of eyes must release every result. Recommended."
+          onText={t('policy.selfVerifyOn')}
+          offText={t('policy.selfVerifyOff')}
           danger={p.allowSelfVerify}
         />
       </Card>
 
-      {error && <p className="note-danger">{error}</p>}
+      {error && <p className="note-danger"><Tr text={error} /></p>}
 
-      <div className="sticky bottom-4 flex items-center gap-3">
-        <Button onClick={save} loading={isPending} disabled={!dirty}>Save policy</Button>
-        {dirty && (
-          <Button variant="ghost" onClick={() => setP(saved)}>Discard changes</Button>
-        )}
-        <span className="flex items-center gap-1.5 text-xs text-subtle">
-          <Info className="h-3.5 w-3.5" />
-          Changes apply to new bookings only. Existing cards and invoices keep their rates.
-        </span>
-      </div>
+      <SaveBar
+        dirty={dirty}
+        saving={isPending}
+        onSave={save}
+        onDiscard={() => setP(saved)}
+        saveLabel={t('policy.save')}
+        note={t('policy.saveNote')}
+      />
     </div>
   );
 }

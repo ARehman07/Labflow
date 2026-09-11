@@ -9,7 +9,7 @@
  */
 export default function Loading() {
   return (
-    <div className="mx-auto max-w-5xl space-y-5" aria-busy="true" aria-live="polite">
+    <div className="page" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading…</span>
 
       <div className="space-y-2">
