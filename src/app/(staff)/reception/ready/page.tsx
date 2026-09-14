@@ -4,6 +4,7 @@ import { tenantDb, currentTenantId } from '@/core/db/context';
 import { AccessDenied } from '@/components/ui/AccessDenied';
 import { getReadyReportsAction } from '@/modules/lab/lab.actions';
 import { ReadyClient } from './ReadyClient';
+import { messagesService } from '@/modules/messages/messages.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,7 @@ export default async function ReadyReportsPage() {
     getReadyReportsAction(),
     (await tenantDb()).tenant.findUnique({ where: { id: await currentTenantId() }, select: { code: true, name: true } }),
   ]);
+  const wa = await messagesService.template('WHATSAPP_REPORT');
   const h = headers();
   const host = h.get('x-forwarded-host') ?? h.get('host') ?? '';
   const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
@@ -24,6 +26,7 @@ export default async function ReadyReportsPage() {
       initial={initial}
       labName={tenant?.name ?? ''}
       portalLink={`${proto}://${host}/portal?lab=${encodeURIComponent(tenant?.code ?? '')}`}
+      waTemplate={wa.custom ? wa.body : null}
     />
   );
 }

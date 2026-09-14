@@ -1,10 +1,12 @@
 'use server';
 
-import { z } from 'zod';
+import { featureOn } from '@/core/features/features.server';import { z } from 'zod';
 import { requirePermission, currentUser, can } from '@/core/rbac/guard';
 import { antibioticsService } from '@/modules/antibiotics/antibiotics.service';
 import { LAB_BOARD_DAYS } from '@/modules/queue/queue.service';
 import { labService } from './lab.service';
+import { messagesService } from '@/modules/messages/messages.service';
+import { tenantDb } from '@/core/db/context';
 import { pickRange, ageInDays, type AgeUnit, type ReferenceRangeDef } from './calc-engine';
 import { advanceSchema, saveResultsSchema } from './lab.schema';
 import { canEnterResults, type OrderLineStatus } from './workflow';
@@ -51,12 +53,41 @@ function startOfDaysAgo(days: number): Date {
   return d;
 }
 
-export async function getWorkboardAction(query?: string): Promise<WorkVisitDTO[]> {
+export interface BoardFilters {
+  /** yyyy-mm-dd, inclusive. */
+  from?: string;
+  to?: string;
+  departmentId?: string;
+  testStatus?: string;
+  /** A partner lab id, ANY (any partner) or NONE (walk-ins only). */
+  partnerLabId?: string;
+}
+
+const isDay = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/u.test(s);
+
+/** Departments and partner labs to filter the board by. */
+export async function getBoardFilterOptionsAction(): Promise<{ departments: { id: string; name: string }[]; partners: { id: string; name: string }[] }> {
+  await currentUser();
+  const db = await tenantDb();
+  const [departments, partners] = await Promise.all([
+    db.department.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    db.partnerLab.findMany({ where: { direction: 'INWARD' }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+  ]);
+  return { departments, partners };
+}
+
+export async function getWorkboardAction(query?: string, filters: BoardFilters = {}): Promise<WorkVisitDTO[]> {
   const user = await currentUser();
   if (!user.branchId) return [];
-  const from = startOfDaysAgo(LAB_BOARD_DAYS);
-  const to = new Date();
-  const visits = await labService.getWorkboard(user.branchId, from, to, query);
+  let from = isDay(filters.from) ? new Date(`${filters.from}T00:00:00`) : startOfDaysAgo(LAB_BOARD_DAYS);
+  let to = new Date();
+  if (isDay(filters.to)) { to = new Date(`${filters.to}T00:00:00`); to.setDate(to.getDate() + 1); }
+  if (from > to) [from, to] = [to, from];
+  const visits = await labService.getWorkboard(user.branchId, from, to, query, {
+    departmentId: filters.departmentId || undefined,
+    testStatus: filters.testStatus || undefined,
+    partnerLabId: filters.partnerLabId || undefined,
+  });
   return visits.map((v) => ({
     id: v.id,
     slipNo: v.slipNo,
@@ -119,6 +150,7 @@ export async function advanceManyAction(
 /** Ask for a fresh sample, with the reason. */
 export async function requestRetakeAction(orderLineId: string, reason: string): Promise<ActionResult> {
   const user = await requirePermission('workflow.advance');
+  if (!(await featureOn('lab.retake'))) return { ok: false, error: 'Sample retakes are switched off for this lab.' };
   const why = String(reason ?? '').trim().slice(0, 200);
   if (!why) return { ok: false, error: 'Say why a new sample is needed.' };
   try {
@@ -150,7 +182,7 @@ export async function saveCultureAction(input: unknown): Promise<ActionResult> {
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid culture result' };
   try {
     const { orderLineId, ...rest } = parsed.data;
-    await labService.saveCulture(orderLineId, rest, user.id);
+    await labService.saveCulture(orderLineId, rest, user.id, { overrideLock: await can('result.approve') });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Save failed' };
@@ -160,6 +192,7 @@ export async function saveCultureAction(input: unknown): Promise<ActionResult> {
 /** Send a collected sample to a reference lab. */
 export async function sendOutAction(orderLineId: string, partnerLabId: string, ref: string): Promise<ActionResult> {
   const user = await requirePermission('workflow.advance');
+  if (!(await featureOn('lab.sendOut'))) return { ok: false, error: 'Sending out to reference labs is switched off for this lab.' };
   try {
     await labService.sendOut(orderLineId, partnerLabId, String(ref ?? '').trim().slice(0, 60) || null, user.id);
     return { ok: true };
@@ -395,7 +428,10 @@ export async function saveResultsAction(input: unknown): Promise<SaveResultsResu
   const parsed = saveResultsSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: 'Invalid result values' };
   try {
-    const computed = await labService.saveResults(parsed.data.orderLineId, parsed.data.values, user.id, parsed.data.remarks);
+    const computed = await labService.saveResults(
+      parsed.data.orderLineId, parsed.data.values, user.id, parsed.data.remarks,
+      { overrideLock: await can('result.approve') },
+    );
     return { ok: true, computed: computed.map((c) => ({ code: c.code, value: c.value, flag: c.flag, isCalculated: c.isCalculated })) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Save failed' };
@@ -509,13 +545,25 @@ export async function approveManyAction(
       failed.push({ orderLineId: id, error: e instanceof Error ? e.message : 'Approval failed' });
     }
   }
+  if (approved > 0) await tellPatientIfReady(orderLineIds.slice(0, 60), user.id);
   return { approved, failed };
+}
+
+/** Once a slip's last test is released the patient can be told — if the lab has that message on. */
+async function tellPatientIfReady(orderLineIds: string[], userId: string) {
+  const db = await tenantDb();
+  const lines = await db.orderLine.findMany({ where: { id: { in: orderLineIds } }, select: { visitId: true } });
+  for (const visitId of [...new Set(lines.map((l) => l.visitId))]) {
+    const open = await db.orderLine.count({ where: { visitId, status: { notIn: ['APPROVED', 'PRINTED', 'DELIVERED', 'CANCELLED'] } } });
+    if (open === 0) await messagesService.notify('REPORT_READY', visitId, {}, userId);
+  }
 }
 
 export async function approveAction(orderLineId: string): Promise<ActionResult> {
   const user = await requirePermission('result.approve');
   try {
     await labService.approve(orderLineId, { id: user.id, role: user.role });
+    await tellPatientIfReady([orderLineId], user.id);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Approval failed' };

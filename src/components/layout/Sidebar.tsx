@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useFeatures } from '@/core/features/FeaturesProvider';import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useI18n } from '@/core/i18n/I18nProvider';
@@ -15,7 +15,8 @@ export function Sidebar({ permissions }: { permissions: string[] }) {
 
   // Hide what this person cannot open. A menu full of doors that answer
   // "no access" teaches staff to ignore the menu.
-  const groups = visibleGroups(permissions);
+  const features = useFeatures();
+  const groups = visibleGroups(permissions, features);
 
   useEffect(() => {
     const load = () => getNavCountsAction().then(setCounts).catch(() => {});

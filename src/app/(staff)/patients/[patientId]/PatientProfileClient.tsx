@@ -1,5 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import { listDocumentsAction, type DocumentRowDTO } from '@/modules/documents/documents.actions';
+
 import Link from 'next/link';
 import { CreditCard, FilePlus2, FileText, Phone, Receipt, ScrollText } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
@@ -96,6 +99,8 @@ export function PatientProfileClient({ profile: p }: { profile: PatientProfileDT
 
       {p.address && <p className="text-sm text-muted">{p.address}</p>}
 
+      {p.can.documents && <PatientDocuments patientId={p.id} />}
+
       <section>
         <h2 className="section-title mb-2">{t('patient.history')}</h2>
         {p.visits.length === 0 ? (
@@ -178,5 +183,41 @@ function VisitCard({ v, can }: { v: PatientVisitDTO; can: PatientProfileDTO['can
         )}
       </div>
     </Card>
+  );
+}
+
+/** Forms made for this patient, and the way to make another. */
+function PatientDocuments({ patientId }: { patientId: string }) {
+  const { t } = useI18n();
+  const [docs, setDocs] = useState<DocumentRowDTO[] | null>(null);
+  useEffect(() => {
+    listDocumentsAction({ patientId }).then(setDocs).catch(() => setDocs([]));
+  }, [patientId]);
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h2 className="section-title">{t('doc.forPatient')}</h2>
+        <Link href={`/documents?patient=${patientId}`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+          <FilePlus2 className="h-4 w-4" /> {t('doc.new')}
+        </Link>
+      </div>
+      {docs === null ? null : docs.length === 0 ? (
+        <p className="text-sm text-muted">{t('doc.noneForPatient')}</p>
+      ) : (
+        <Card className="divide-y divide-line p-0">
+          {docs.map((d) => (
+            <Link key={d.id} href={`/documents/${d.id}`} className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-surface-2">
+              <FileText className="h-4 w-4 shrink-0 text-subtle" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-body">{d.title}</span>
+                <span className="block text-xs text-subtle">{t('doc.no')} {d.docNo} · {d.created} · {t('doc.printedN').replace('{n}', String(d.prints))}</span>
+              </span>
+              <Badge tone={d.status === 'FINAL' ? 'success' : 'warning'} size="sm">{t(`doc.status.${d.status}`)}</Badge>
+            </Link>
+          ))}
+        </Card>
+      )}
+    </section>
   );
 }

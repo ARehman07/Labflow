@@ -8,6 +8,7 @@ import { Barcode } from '@/components/ui/Barcode';
 import { Letterhead } from '@/components/report/Letterhead';
 import { cn } from '@/lib/utils';
 import type { ReportData, ReportTest } from '@/modules/reporting/report.types';
+import { fontStack } from '@/modules/reporting/layout';
 
 /**
  * The document a patient keeps and a referring doctor judges the lab by.
@@ -34,17 +35,23 @@ const FLAG_MARK: Record<string, string> = { HIGH: 'H', LOW: 'L', CRITICAL: 'CRIT
 const TREND_MARK: Record<string, string> = { UP: '▲', DOWN: '▼', SAME: '▬' };
 
 export function ReportDocument({
-  data, showActions = true, withHistory = false, letterhead = true,
+  data, showActions = true, withHistory = false, letterhead,
 }: {
   data: ReportData;
   showActions?: boolean;
   /** Add the patient's earlier results beside each value. */
   withHistory?: boolean;
-  /** Off for pre-printed letterhead paper: the space is kept, the masthead is not drawn. */
+  /** Off for pre-printed letterhead paper: the space is kept, the masthead is not drawn. Defaults to the lab's setting. */
   letterhead?: boolean;
 }) {
   const { t } = useI18n();
   const lh = data.letterhead;
+  const layout = data.layout;
+  const showHeader = letterhead ?? layout.showHeader;
+  // Results scale by zooming the table and widening it by the same factor, so
+  // it still fills exactly the page width at any size.
+  const scale = layout.fontScale / 100;
+  const scaled = scale === 1 ? undefined : { zoom: scale, width: `${100 / scale}%` };
 
   const abnormal = data.tests.flatMap((x) => x.params).filter((p) => p.flag !== 'NORMAL' && p.value != null && String(p.value).trim() !== '');
   const hasCritical = abnormal.some((p) => p.flag === 'CRITICAL');
@@ -53,7 +60,7 @@ export function ReportDocument({
 
   const codes = (
     <div className="flex flex-col items-end gap-1">
-      <QrCode value={`LabFlow|${lh.labName}|MR:${data.mrNo}|Slip:${data.slipNo}`} size={letterhead ? 64 : 56} />
+      <QrCode value={`LabFlow|${lh.labName}|MR:${data.mrNo}|Slip:${data.slipNo}`} size={showHeader ? 64 : 56} />
       <Barcode value={data.slipNo} height={16} width={92} />
     </div>
   );
@@ -69,15 +76,20 @@ export function ReportDocument({
         </div>
       )}
 
-      <div className="print-area report-sheet card p-4 sm:p-8 print:rounded-none print:border-0 print:p-0 print:shadow-none">
+      {/* The lab's page margins. Only this page's @page rule — a slip keeps its own. */}
+      <style>{`@media print { @page { margin: ${layout.topMarginMm}mm 12mm ${layout.bottomMarginMm}mm 12mm; } }`}</style>
+      <div
+        className="print-area report-sheet card p-4 sm:p-8 print:rounded-none print:border-0 print:p-0 print:shadow-none"
+        style={{ fontFamily: fontStack(layout.font) }}
+      >
         {/* A single-cell table so the letterhead can ride in <thead>: Chrome
             repeats a table header group at the top of every printed page, so
             page 3 of a long report is still identifiably this lab's. */}
-        <table className="w-full border-collapse">
+        <table className="w-full border-collapse" style={scaled}>
           <thead className="print-running-head">
             <tr>
               <td className="p-0">
-                {letterhead ? (
+                {showHeader ? (
                   <Letterhead data={lh} docLabel={t('report.title')} docNumber={data.slipNo} right={codes} />
                 ) : (
                   // Pre-printed paper already carries the lab's name and logo at
@@ -179,14 +191,16 @@ export function ReportDocument({
         */}
         <div className="print-running-foot mt-8 border-t border-line pt-2">
           <div className="flex items-end justify-between gap-8">
-            <div className="text-[10px] leading-tight text-subtle">
-              <p className="font-semibold text-body">{lh.labName}</p>
-              <p>
-                {t('report.title')} {data.slipNo} · {data.patientName} · {data.mrNo}
-              </p>
-            </div>
+            {layout.showFooter && (
+              <div className="text-[10px] leading-tight text-subtle">
+                <p className="font-semibold text-body">{lh.labName}</p>
+                <p>
+                  {t('report.title')} {data.slipNo} · {data.patientName} · {data.mrNo}
+                </p>
+              </div>
+            )}
             {verifiers.length > 0 && (
-              <div className="text-center">
+              <div className="ms-auto text-center">
                 <div className="w-52 border-t border-strong pt-1">
                   <div className="text-[11px] font-bold text-strong">{verifiers.join(', ')}</div>
                   <div className="text-[9px] uppercase tracking-wider text-subtle">
@@ -196,9 +210,11 @@ export function ReportDocument({
               </div>
             )}
           </div>
-          <p className="mt-1.5 text-center text-[9px] leading-relaxed text-subtle">
-            {lh.footerNote || t('report.footer')}
-          </p>
+          {layout.showFooter && (
+            <p className="mt-1.5 text-center text-[9px] leading-relaxed text-subtle">
+              {lh.footerNote || t('report.footer')}
+            </p>
+          )}
         </div>
       </div>
     </div>

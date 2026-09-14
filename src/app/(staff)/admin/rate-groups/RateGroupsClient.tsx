@@ -16,6 +16,7 @@ import {
   listRateGroupsAction,
   saveRateGroupAction,
   setRateGroupActiveAction,
+  setRateGroupCounterAction,
   setRateGroupPricesAction,
   type RateGroupDTO,
   type RateGroupPricesDTO,
@@ -94,9 +95,20 @@ export function RateGroupsClient({ initial }: { initial: RateGroupDTO[] }) {
                     {t('rg.pricesSet').replace('{n}', String(g.priceCount))}
                     {g.defaultDiscountPct > 0 && ` · ${t('rg.discountShort').replace('{pct}', String(g.defaultDiscountPct))}`}
                     {g.usedBy > 0 && ` · ${t('rg.usedBy').replace('{n}', String(g.usedBy))}`}
+                    {!g.atCounter && ` · ${t('rg.b2bOnly')}`}
                   </span>
                 </span>
                 {!g.isActive && <Badge tone="neutral" size="sm">{t('accounts.inactive')}</Badge>}
+                {/* A B2B lab's or collection point's list applies through them, not from the counter's price-list choice. */}
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-muted" title={t('rg.atCounterHint')}>
+                  <input
+                    type="checkbox"
+                    checked={g.atCounter}
+                    onChange={async (e) => { await setRateGroupCounterAction(g.id, e.target.checked); await reload(); }}
+                    className="h-4 w-4 accent-brand-600"
+                  />
+                  {t('rg.atCounter')}
+                </label>
                 <Button variant="outline" size="sm" loading={busy === g.id} onClick={() => openPrices(g.id)}>{t('rg.prices')}</Button>
                 <Button variant="ghost" size="sm" onClick={async () => { await setRateGroupActiveAction(g.id, !g.isActive); await reload(); }}>
                   {g.isActive ? t('accounts.hide') : t('accounts.show')}

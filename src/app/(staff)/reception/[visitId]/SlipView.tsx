@@ -5,13 +5,14 @@ import Link from 'next/link';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button, buttonVariants } from '@/components/ui/Button';
 import { BookingEditor } from './BookingEditor';
+import { ModifySlipPanel } from './ModifySlipPanel';
 import { AttachmentsPanel } from './AttachmentsPanel';
 import { PrintButton } from '@/components/ui/PrintButton';
 import { QrCode } from '@/components/ui/QrCode';
 import { Letterhead } from '@/components/report/Letterhead';
 import { formatPkr } from '@/lib/utils';
 import type { Letterhead as LetterheadData } from '@/modules/reporting/report.types';
-import { Ban, FilePlus2, MessageSquareText, PencilLine } from 'lucide-react';
+import { Ban, FilePlus2, IdCard, MessageSquareText, PencilLine } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 
 export interface SlipData {
@@ -40,7 +41,14 @@ export interface SlipData {
   status: string;
   /** Tests still on the booking, with what each costs today, for editing. */
   lines: { id: string; testId: string; name: string; status: string; price: number }[];
-  can: { modify: boolean; cancel: boolean };
+  can: { modify: boolean; cancel: boolean; reopen: boolean };
+  /** The patient record, for correcting it from the slip. */
+  patient: {
+    fullName: string; mobile: string | null; cnic: string | null; sex: string | null;
+    dateOfBirth: string | null; age: number | null; ageUnit: string; address: string | null;
+  };
+  /** Tests already released on this slip — what Mark results pending would take back. */
+  releasedCount: number;
   gross: number;
   discount: number;
   /** Who authorised the discount, when it was granted care of someone. */
@@ -52,6 +60,8 @@ export interface SlipData {
   tokenNumber: number | null;
   paid: number;
   paymentMethods: string[];
+  /** Whether the lab offers online reports, and so prints how to reach them. */
+  showPortal: boolean;
   /** What a patient types into the portal, alongside their mobile number. */
   labCode: string;
   portalUrl: string;
@@ -68,8 +78,10 @@ export interface SlipData {
 export function SlipView({ data }: { data: SlipData }) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
+  const [modifying, setModifying] = useState(false);
   const cancelled = data.status === 'CANCELLED';
   const editable = !cancelled && (data.can.modify || data.can.cancel);
+  const canModifySlip = !cancelled && (data.can.modify || (data.can.reopen && data.releasedCount > 0));
 
   return (
     <div className="page">
@@ -81,8 +93,13 @@ export function SlipView({ data }: { data: SlipData }) {
           back={{ href: '/reception', label: t('nav.newBooking') }}
           actions={
             <>
+              {canModifySlip && (
+                <Button variant="outline" onClick={() => { setModifying((m) => !m); setEditing(false); }} aria-expanded={modifying}>
+                  <IdCard className="h-4 w-4" /> {t('modify.title')}
+                </Button>
+              )}
               {editable && (
-                <Button variant="outline" onClick={() => setEditing((e) => !e)} aria-expanded={editing}>
+                <Button variant="outline" onClick={() => { setEditing((e) => !e); setModifying(false); }} aria-expanded={editing}>
                   <PencilLine className="h-4 w-4" /> {t('edit.title')}
                 </Button>
               )}
@@ -96,6 +113,7 @@ export function SlipView({ data }: { data: SlipData }) {
       </div>
 
       {editing && <BookingEditor data={data} onClose={() => setEditing(false)} />}
+      {modifying && <ModifySlipPanel data={data} onClose={() => setModifying(false)} />}
 
       {cancelled && (
         <p className="no-print note-danger flex items-center gap-2">
@@ -256,6 +274,7 @@ export function SlipView({ data }: { data: SlipData }) {
           </tfoot>
         </table>
 
+        {data.showPortal && (<>
         {/* The portal asks for a lab code "printed on your booking slip" — so it is.
             The QR carries only the portal address and the lab code; the
             patient's number is never put into a link. */}
@@ -270,6 +289,7 @@ export function SlipView({ data }: { data: SlipData }) {
             </div>
           </div>
         </div>
+        </>)}
 
         <div className="print-running-foot mt-6 border-t border-line pt-2">
           <div className="flex items-baseline justify-between gap-6 text-[10px] text-subtle">

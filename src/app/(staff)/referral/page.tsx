@@ -1,3 +1,5 @@
+import { featureOn } from '@/core/features/features.server';
+import { FeatureOff } from '@/components/ui/FeatureOff';
 import { can } from '@/core/rbac/guard';
 import { ReferralClient } from './ReferralClient';
 import { AccessDenied } from '@/components/ui/AccessDenied';
@@ -5,6 +7,7 @@ import { AccessDenied } from '@/components/ui/AccessDenied';
 export const dynamic = 'force-dynamic';
 
 export default async function ReferralPage() {
+  if (!(await featureOn('money.referrals'))) return <FeatureOff />;
   if (!(await can('finance.view'))) {
     return <AccessDenied area="referral" />;
   }

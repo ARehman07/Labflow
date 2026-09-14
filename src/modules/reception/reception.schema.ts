@@ -118,3 +118,9 @@ export const bookVisitSchema = z.object({
   testRemarks: z.record(z.string(), z.string().trim().max(200)).default({}),
 });
 export type BookVisitInput = z.infer<typeof bookVisitSchema>;
+
+/** Correcting who a slip belongs to. Changes the patient record itself. */
+export const slipPatientSchema = patientCreateSchema.pick({
+  fullName: true, age: true, sex: true, mobile: true, address: true, cnic: true, dateOfBirth: true, ageUnit: true,
+});
+export type SlipPatientInput = z.infer<typeof slipPatientSchema>;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useFeatures } from '@/core/features/FeaturesProvider';import { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
 /**
@@ -16,6 +16,7 @@ import { usePathname, useRouter } from 'next/navigation';
 export function GlobalShortcuts({ permissions }: { permissions: string[] }) {
   const router = useRouter();
   const pathname = usePathname();
+  const features = useFeatures();
 
   useEffect(() => {
     const has = (...codes: string[]) => codes.some((c) => permissions.includes(c));
@@ -26,7 +27,7 @@ export function GlobalShortcuts({ permissions }: { permissions: string[] }) {
         case 'KeyL': if (has('visit.create')) go('/reception'); break;
         case 'KeyT': if (pathname !== '/reception' && has('result.enter', 'sample.collect', 'workflow.advance')) go('/lab'); break;
         case 'KeyB': if (has('billing.view')) go('/billing'); break;
-        case 'KeyQ': if (has('workflow.advance')) go('/queue'); break;
+        case 'KeyQ': if (has('workflow.advance') && features['lab.queue']) go('/queue'); break;
         case 'KeyR': if (has('report.print', 'report.deliver')) go('/reception/ready'); break;
         case 'KeyH': {
           const input = document.querySelector<HTMLInputElement>('header input');
@@ -37,7 +38,7 @@ export function GlobalShortcuts({ permissions }: { permissions: string[] }) {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [permissions, pathname, router]);
+  }, [permissions, pathname, router, features]);
 
   return null;
 }

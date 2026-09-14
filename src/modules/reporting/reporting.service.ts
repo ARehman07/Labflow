@@ -5,7 +5,7 @@ import type { ReportData, ReportTest } from './report.types';
 
 const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'] as const;
 
-/** How many earlier visits a report printed with history shows per test. */
+/** How many earlier visits a report printed with history shows per test, unless the lab sets its own. */
 export const HISTORY_COLUMNS = 3;
 
 const num = (v: string | null | undefined) => {
@@ -26,6 +26,7 @@ function historyFor(
   line: { testId: string; test: { parameters: { id: string }[] } },
   rows: { parameterId: string; value: string | null; flag: string; orderLine: { testId: string; visit: { id: string; slipNo: string; bookedAt: Date } } }[],
   fmtDate: (d: Date) => string,
+  limit: number = HISTORY_COLUMNS,
 ) {
   const own = new Set(line.test.parameters.map((p) => p.id));
   const mine = rows.filter((r) => own.has(r.parameterId));
@@ -35,7 +36,7 @@ function historyFor(
     if (seen.has(r.orderLine.visit.id)) continue;
     seen.add(r.orderLine.visit.id);
     columns.push({ visitId: r.orderLine.visit.id, slipNo: r.orderLine.visit.slipNo, date: fmtDate(r.orderLine.visit.bookedAt) });
-    if (columns.length === HISTORY_COLUMNS) break;
+    if (columns.length === limit) break;
   }
   const cell = new Map(mine.map((r) => [`${r.orderLine.visit.id}:${r.parameterId}`, r]));
   return { columns, cell };
@@ -86,6 +87,9 @@ export async function getReportData(
         select: {
           name: true, tagline: true, logoDataUrl: true,
           licenseNo: true, email: true, reportFooterNote: true,
+          reportHistoryColumns: true, reportHistoryByDefault: true,
+          reportShowHeader: true, reportShowFooter: true, reportTopMarginMm: true,
+          reportBottomMarginMm: true, reportFont: true, reportFontScale: true,
         },
       },
       orderLines: {
@@ -132,7 +136,7 @@ export async function getReportData(
 
   let reportedAt: Date | null = null;
   const tests: ReportTest[] = visit.orderLines.map((line) => {
-    const { columns, cell } = historyFor(line, earlier, shortDate);
+    const { columns, cell } = historyFor(line, earlier, shortDate, visit.tenant.reportHistoryColumns);
     const resultByParam = new Map(line.results.map((r) => [r.parameterId, r]));
     for (const r of line.results) {
       if (r.approvedAt && (!reportedAt || r.approvedAt > reportedAt)) reportedAt = r.approvedAt;
@@ -223,6 +227,15 @@ export async function getReportData(
     doctorName: visit.doctor?.name ?? null,
     tests,
     hasHistory: tests.some((x) => x.history.length > 0),
+    historyByDefault: visit.tenant.reportHistoryByDefault,
+    layout: {
+      showHeader: visit.tenant.reportShowHeader,
+      showFooter: visit.tenant.reportShowFooter,
+      topMarginMm: visit.tenant.reportTopMarginMm,
+      bottomMarginMm: visit.tenant.reportBottomMarginMm,
+      font: visit.tenant.reportFont,
+      fontScale: visit.tenant.reportFontScale,
+    },
   };
 }
 

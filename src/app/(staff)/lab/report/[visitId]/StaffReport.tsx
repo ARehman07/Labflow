@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, FileDown, HandHeart, History, ImageDown, MessageCircle, Printer, Stamp } from 'lucide-react';
+import { CheckCircle2, FileDown, HandHeart, History, ImageDown, Mail, MessageCircle, MessageSquare, Printer, Sparkles, Stamp } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -11,7 +11,10 @@ import { useToast } from '@/components/ui/Toast';
 import { ReportDocument } from '@/components/report/ReportDocument';
 import { cn } from '@/lib/utils';
 import { whatsappLink } from '@/lib/whatsapp';
-import { exportReport, reportFileName } from '@/lib/report-export';
+import { renderTemplate } from '@/modules/messages/templates';
+import { exportReport, reportFileName, reportPdfBase64 } from '@/lib/report-export';
+import { emailReportAction, integrationsStatusAction, smsReportAction } from '@/modules/delivery/delivery.actions';
+import { aiInterpretReportAction } from '@/modules/ai/ai.actions';
 import { markReportDeliveredAction, markReportPrintedAction } from '@/modules/lab/lab.actions';
 import type { ReportData } from '@/modules/reporting/report.types';
 
@@ -28,7 +31,7 @@ const PREF_LETTERHEAD = 'labflow.report.letterhead';
  * letterhead on it. Both are remembered on this computer.
  */
 export function StaffReport({
-  visitId, data, canRelease, labName, portalLink, delivered, printed,
+  visitId, data, canRelease, labName, portalLink, delivered, printed, waTemplate,
 }: {
   visitId: string;
   data: ReportData;
@@ -37,6 +40,8 @@ export function StaffReport({
   portalLink: string;
   delivered: boolean;
   printed: boolean;
+  /** The lab's own WhatsApp wording, when it has saved one. */
+  waTemplate: string | null;
 }) {
   const { t } = useI18n();
   const toast = useToast();
@@ -45,12 +50,48 @@ export function StaffReport({
   const [withHistory, setWithHistory] = useState(false);
   const [letterhead, setLetterhead] = useState(true);
   const sheet = useRef<HTMLDivElement>(null);
+  const [services, setServices] = useState({ email: false, sms: false, ai: false });
+  const [aiText, setAiText] = useState<string | null>(null);
+  useEffect(() => { integrationsStatusAction().then(setServices).catch(() => {}); }, []);
+
+  async function emailReport() {
+    const el = sheet.current?.querySelector<HTMLElement>('.report-sheet');
+    if (!el) return;
+    setBusy('EMAIL');
+    try {
+      const pdf = await reportPdfBase64(el);
+      const res = await emailReportAction(visitId, pdf, portalLink);
+      if (res.ok) { toast('success', t('report.emailed')); router.refresh(); } else toast('error', res.error);
+    } catch {
+      toast('error', t('report.exportFailed'));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function smsReport() {
+    setBusy('SMS');
+    const res = await smsReportAction(visitId, portalLink);
+    setBusy(null);
+    if (res.ok) { toast('success', t('report.smsSent')); router.refresh(); } else toast('error', res.error);
+  }
+
+  async function aiDraft() {
+    setBusy('AI');
+    const res = await aiInterpretReportAction(visitId);
+    setBusy(null);
+    if (res.ok) setAiText(res.text); else toast('error', res.error);
+  }
 
   useEffect(() => {
     try {
-      setWithHistory(localStorage.getItem(PREF_HISTORY) === '1');
-      setLetterhead(localStorage.getItem(PREF_LETTERHEAD) !== '0');
-    } catch { /* storage blocked */ }
+      // A choice this person made on this device wins; otherwise the lab's default.
+      const pref = localStorage.getItem(PREF_HISTORY);
+      setWithHistory(pref === null ? data.historyByDefault : pref === '1');
+      const lhPref = localStorage.getItem(PREF_LETTERHEAD);
+      setLetterhead(lhPref === null ? data.layout.showHeader : lhPref !== '0');
+    } catch { setWithHistory(data.historyByDefault); setLetterhead(data.layout.showHeader); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const remember = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* storage blocked */ } };
 
@@ -75,11 +116,10 @@ export function StaffReport({
 
   async function deliver(channel: 'PRINT' | 'WHATSAPP') {
     if (channel === 'WHATSAPP') {
-      const link = data.mobile ? whatsappLink(data.mobile, t('ready.waMessage')
-        .replace('{name}', data.patientName)
-        .replace('{lab}', labName)
-        .replace('{slip}', data.slipNo)
-        .replace('{link}', portalLink)) : null;
+      const text = waTemplate
+        ? renderTemplate(waTemplate, { patient: data.patientName, lab: labName, slip: data.slipNo, mr: data.mrNo, link: portalLink })
+        : t('ready.waMessage').replace('{name}', data.patientName).replace('{lab}', labName).replace('{slip}', data.slipNo).replace('{link}', portalLink);
+      const link = data.mobile ? whatsappLink(data.mobile, text) : null;
       if (!link) { toast('error', t('ready.noMobile')); return; }
       window.open(link, '_blank', 'noopener');
     }
@@ -148,8 +188,31 @@ export function StaffReport({
           <Button variant="ghost" size="sm" onClick={() => save('png')} loading={busy === 'png'}>
             <ImageDown className="h-3.5 w-3.5" /> {t('report.downloadPng')}
           </Button>
+          {canRelease && (
+            <>
+              <Button variant="ghost" size="sm" onClick={emailReport} loading={busy === 'EMAIL'} disabled={!services.email} title={services.email ? undefined : t('report.emailOff')}>
+                <Mail className="h-3.5 w-3.5" /> {t('report.email')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={smsReport} loading={busy === 'SMS'} disabled={!services.sms || !data.mobile} title={services.sms ? undefined : t('report.smsOff')}>
+                <MessageSquare className="h-3.5 w-3.5" /> {t('report.sms')}
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" size="sm" onClick={aiDraft} loading={busy === 'AI'} disabled={!services.ai} title={services.ai ? undefined : t('ai.off')}>
+            <Sparkles className="h-3.5 w-3.5" /> {t('ai.analyze')}
+          </Button>
           {!data.hasHistory && <span className="text-xs text-subtle">{t('report.noHistory')}</span>}
         </div>
+        {aiText && (
+          <div className="rounded-xl border border-brand-500/25 bg-brand-500/[0.05] p-4 text-sm">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 font-semibold text-strong"><Sparkles className="h-4 w-4" /> {t('ai.draftTitle')}</span>
+              <button type="button" onClick={() => setAiText(null)} className="text-xs font-semibold text-muted hover:text-strong">{t('common.close')}</button>
+            </div>
+            <p className="whitespace-pre-wrap text-body">{aiText}</p>
+            <p className="mt-2 text-xs text-subtle">{t('ai.disclaimer')}</p>
+          </div>
+        )}
       </div>
       <div ref={sheet}>
         <ReportDocument data={data} showActions={false} withHistory={withHistory} letterhead={letterhead} />

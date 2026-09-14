@@ -58,6 +58,16 @@ model Tenant {
   familyCardDiscountOnIssue Boolean @default(true)
   /// When false, the user who saved a result may not verify it.
   allowSelfVerify           Boolean @default(false)
+  /// Minutes after results are saved during which the person entering them may
+  /// still change them. After that only an approver can. 0 = never locks.
+  resultEditLockMins        Int     @default(0)
+  /// Hours after booking during which a refund may be issued. After that only
+  /// the lab owner can. 0 = no limit.
+  refundWindowHours         Int     @default(0)
+  /// Earlier visits shown per test when a report is printed with history.
+  reportHistoryColumns      Int     @default(3)
+  /// Whether reports open with earlier results already shown.
+  reportHistoryByDefault    Boolean @default(false)
 
   // ── Letterhead. What a patient sees on paper is the lab, not the software.
   /// Logo as a data URL. Held inline rather than in object storage: a lab logo
@@ -71,6 +81,22 @@ model Tenant {
   email            String?
   /// Replaces the default disclaimer at the foot of a report.
   reportFooterNote String?
+
+  // ── Report layout on paper.
+  /// Draw the letterhead. Off for paper that already has it printed.
+  reportShowHeader     Boolean @default(true)
+  /// Print the lab line and disclaimer at the foot. The signature always prints.
+  reportShowFooter     Boolean @default(true)
+  reportTopMarginMm    Int     @default(14)
+  reportBottomMarginMm Int     @default(14)
+  /// DEFAULT, ARIAL, TAHOMA, GEORGIA, TIMES or COURIER
+  reportFont           String  @default("DEFAULT")
+  /// Size of the results, as a percentage of normal.
+  reportFontScale      Int     @default(100)
+
+  /// Which parts of LabFlow this lab uses, as JSON of switch → on/off. A switch
+  /// missing here is on. See core/features/catalog.
+  features String @default("{}")
 
   branches              Branch[]
   roles                 Role[]
@@ -127,6 +153,10 @@ model Tenant {
   analyzers             Analyzer[]
   analyzerMappings      AnalyzerMapping[]
   analyzerMessages      AnalyzerMessage[]
+  messageTemplates      MessageTemplate[]
+  messageLogs           MessageLog[]
+  documentTemplates     DocumentTemplate[]
+  patientDocuments      PatientDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -261,6 +291,7 @@ model Patient {
   visits          Visit[]
   primaryOfCards  FamilyCard[]       @relation("FamilyCardPrimary")
   cardMemberships FamilyCardMember[] @relation("FamilyCardMembership")
+  documents       PatientDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -790,6 +821,8 @@ model Payment {
   accountId    String?
   account      PaymentAccount? @relation(fields: [accountId], references: [id])
   receivedById String
+  /// Set on a negative payment: why money recorded as received was taken back.
+  note         String?
   at           DateTime        @default(now())
 
   @@index([tenantId])
@@ -955,10 +988,16 @@ model Notification {
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   userId   String
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// A message key and its values as JSON, so it shows in the reader's language.
   message  String
   isRead   Boolean  @default(false)
+  /// Where tapping it goes, e.g. /lab/critical.
+  link     String?
+  /// CRITICAL, RETAKE, SENT_BACK, DELAYED, B2B_BOOKING, ANALYZER or INFO.
+  kind     String   @default("INFO")
   at       DateTime @default(now())
 
+  @@index([userId, isRead])
   @@index([tenantId])
 }
 
@@ -1069,6 +1108,9 @@ model RateGroup {
   name               String
   defaultDiscountPct Decimal @default(0)
   isActive           Boolean @default(true)
+  /// Offered in the price-list choice at the counter. Off for a list that only
+  /// applies through its B2B lab or collection point.
+  atCounter          Boolean @default(true)
 
   prices           RateGroupPrice[]
   visits           Visit[]
@@ -1309,6 +1351,10 @@ model Analyzer {
   name       String
   keyHash    String            @unique
   keyPrefix  String
+  /// The account results from this instrument are entered under. It cannot
+  /// sign in; it exists so every value names where it came from, and so the
+  /// person who approves it is never "the same person who entered it".
+  userId     String?
   isActive   Boolean           @default(true)
   lastSeenAt DateTime?
   mappings   AnalyzerMapping[]
@@ -1349,4 +1395,92 @@ model AnalyzerMessage {
 
   @@index([analyzerId])
   @@index([tenantId])
+}
+
+/// A patient message the lab switches on and words itself — slip booked,
+/// report ready and so on. No row means the built-in wording, switched off.
+model MessageTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// SLIP_BOOKED, REPORT_READY, B2B_RECEIVED, PAYMENT_RECEIVED, REFUND_ISSUED, WHATSAPP_REPORT
+  event     String
+  enabled   Boolean  @default(false)
+  body      String
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, event])
+  @@index([tenantId])
+}
+
+/// Every SMS and email the lab sent, or tried to — and why one did not go.
+model MessageLog {
+  id       String         @id @default(cuid())
+  tenantId String
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel  String
+  event    String
+  to       String
+  subject  String?
+  body     String
+  status   String
+  error    String?
+  visitId  String?
+  userId   String?
+  at       DateTime       @default(now())
+
+  @@index([tenantId, at])
+}
+
+/// A form the lab prints for patients — a consent, a test certificate, a letter —
+/// worded once with {placeholders} and filled in for each patient.
+model DocumentTemplate {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title     String
+  /// CONSENT, CERTIFICATE, LETTER or OTHER
+  type      String   @default("OTHER")
+  body      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  documents PatientDocument[]
+
+  @@index([tenantId])
+}
+
+/// One filled-in form for one patient. A draft can be edited; once final it is
+/// only printed, and the signed paper can be scanned back onto it.
+model PatientDocument {
+  id           String            @id @default(cuid())
+  tenantId     String
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// The number printed on the paper, counting up per lab.
+  docNo        Int
+  patientId    String
+  patient      Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  /// The booking it was made for, when there was one.
+  visitId      String?
+  templateId   String?
+  template     DocumentTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  title        String
+  type         String            @default("OTHER")
+  body         String
+  /// DRAFT or FINAL
+  status       String            @default("DRAFT")
+  prints       Int               @default(0)
+  createdById  String
+  finalizedAt  DateTime?
+  scanFileName String?
+  scanMimeType String?
+  scanSize     Int?
+  scanData     Bytes?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([tenantId, docNo])
+  @@index([tenantId])
+  @@index([patientId])
 }

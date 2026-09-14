@@ -7,6 +7,7 @@ import { useI18n } from '@/core/i18n/I18nProvider';
 import { LanguageToggle } from './LanguageToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { PatientSearch } from './PatientSearch';
+import { NotificationBell } from './NotificationBell';
 import { Icon } from '@/components/ui/Icon';
 import { logoutAction } from '@/app/(staff)/actions';
 
@@ -56,6 +57,7 @@ export function Topbar({ userName, role, branchName, canSearch = false }: Topbar
 
         <div className="flex items-center gap-2">
           {canSearch && <PatientSearch />}
+          <NotificationBell />
 
           {/* Display preferences */}
           <div className="hidden items-center gap-1 md:flex">

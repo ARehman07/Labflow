@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useFeatures } from '@/core/features/FeaturesProvider';import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
-  Search, Droplet, PencilLine, Eye, Printer, PackageCheck, AlertTriangle, Clock, Megaphone, MessageSquareText, RotateCcw, Send, Ticket, Undo2, type LucideIcon,
+  Search, Droplet, PencilLine, Eye, Printer, PackageCheck, AlertTriangle, Clock, Megaphone, MessageSquareText, RotateCcw, Send, SlidersHorizontal, Ticket, Undo2, X, type LucideIcon,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { Select } from '@/components/ui/Select';
@@ -22,6 +22,8 @@ import {
   requestRetakeAction,
   markDelayedAction,
   sendOutAction,
+  getBoardFilterOptionsAction,
+  type BoardFilters,
   type WorkVisitDTO,
   type WorkLineDTO,
 } from '@/modules/lab/lab.actions';
@@ -119,10 +121,24 @@ export function WorkboardClient() {
   const [loading, setLoading] = useState(true);
   const [, startTransition] = useTransition();
 
+  // Narrowing the board: a date range beyond the usual 30 days, a department,
+  // one test status, or one partner lab's patients.
+  const [filters, setFilters] = useState<BoardFilters>({});
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [options, setOptions] = useState<{ departments: { id: string; name: string }[]; partners: { id: string; name: string }[] }>({ departments: [], partners: [] });
+  const filtersRef = useRef<BoardFilters>(filters);
+  filtersRef.current = filters;
+  const activeFilters = Object.values(filters).filter(Boolean).length;
+  useEffect(() => {
+    if (filtersOpen && options.departments.length === 0) getBoardFilterOptionsAction().then(setOptions).catch(() => {});
+  }, [filtersOpen, options.departments.length]);
+
   const load = useCallback((q?: string) => {
     setLoading(true);
-    getWorkboardAction(q).then(setVisits).catch(() => setVisits([])).finally(() => setLoading(false));
+    getWorkboardAction(q, filtersRef.current).then(setVisits).catch(() => setVisits([])).finally(() => setLoading(false));
   }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(query || undefined); }, [filters]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => load(query || undefined), [load]);
@@ -238,72 +254,173 @@ export function WorkboardClient() {
     return list.sort((a, b) => rank(a) - rank(b) || a.patientName.localeCompare(b.patientName));
   }, [visits, filter]);
 
+  // Masonry: each card drops into whichever column is shorter so far, so a tall
+  // card never leaves a hole beside a short one, and the most urgent patients
+  // still sit at the top of both columns.
+  const columnCount = useColumnCount();
+  const columns = useMemo(() => {
+    const cols: WorkVisitDTO[][] = Array.from({ length: columnCount }, () => []);
+    const heights = new Array<number>(columnCount).fill(0);
+    for (const v of shown) {
+      const i = heights.indexOf(Math.min(...heights));
+      cols[i].push(v);
+      heights[i] += estimateCardHeight(v);
+    }
+    return cols;
+  }, [shown, columnCount]);
+
   return (
     <div className="page">
       <PageHeader
         title={t('lab.title')}
         actions={
           <>
+            {queue && (serving || waitingTokens > 0) && (
+              // The waiting room sits beside the title: calling the next patient in
+              // is the first thing done at the bench, before any card is touched.
+              <div className="flex w-full min-w-0 items-center gap-3 rounded-2xl border border-line bg-surface p-1.5 shadow-card sm:w-auto">
+                <span className="grid h-9 min-w-9 shrink-0 place-items-center rounded-xl bg-brand-600 px-2 font-mono text-lg font-black tabular-nums text-white">
+                  {serving ? serving.number : '—'}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-subtle">{t('lab.nowServing')}</div>
+                  <div className="truncate text-sm font-semibold text-strong sm:max-w-52">
+                    {serving ? serving.patientName : t('lab.nobodyCalled')}
+                    <span className="font-normal text-muted">
+                      {' · '}
+                      {nextToken && `${t('lab.upNext').replace('{n}', String(nextToken.number))} · `}
+                      {t('lab.waitingN').replace('{n}', String(waitingTokens))}
+                    </span>
+                  </div>
+                </div>
+                <Button size="sm" className="shrink-0" onClick={callNext} loading={calling} disabled={waitingTokens === 0}>
+                  <Megaphone className="h-4 w-4" /> {t('lab.callNext')}
+                </Button>
+              </div>
+)}
             <div className="relative w-full sm:w-60">
               <Search className="pointer-events-none absolute inset-y-0 start-0 my-auto ms-3.5 h-4 w-4 text-subtle" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('lab.search')} className="field ps-10" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('lab.search')} aria-label={t('lab.search')} className="field ps-10" />
             </div>
           </>
         }
       />
 
-      {queue && (serving || waitingTokens > 0) && (
-        <div className="card flex flex-wrap items-center gap-3 p-3">
-          <span className="grid h-11 min-w-11 place-items-center rounded-xl bg-brand-600 px-2 font-mono text-xl font-black tabular-nums text-white">
-            {serving ? serving.number : '—'}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-subtle">{t('lab.nowServing')}</div>
-            <div className="truncate text-sm font-semibold text-strong">
-              {serving ? serving.patientName : t('lab.nobodyCalled')}
-              <span className="font-normal text-muted">
-                {' · '}
-                {nextToken && `${t('lab.upNext').replace('{n}', String(nextToken.number))} · `}
-                {t('lab.waitingN').replace('{n}', String(waitingTokens))}
-              </span>
-            </div>
-          </div>
-          <Button size="sm" onClick={callNext} loading={calling} disabled={waitingTokens === 0}>
-            <Megaphone className="h-4 w-4" /> {t('lab.callNext')}
+      {/* One sticky bar for narrowing the work: which stage, and any extra filters.
+          It stays put while the cards scroll, so switching stage never means
+          scrolling back to the top. */}
+      <div className="sticky top-[66px] z-10 -mx-2 flex flex-wrap items-center gap-2 bg-canvas/90 px-2 py-2 backdrop-blur-md">
+        {/* Phones swipe the chips sideways; a wrapped stack would fill the screen once it sticks. */}
+        <div className="-my-1 flex min-w-0 flex-1 gap-2 no-scrollbar overflow-x-auto py-1 sm:flex-wrap sm:overflow-visible">
+          <FilterChip
+            label={t('lab.filterAll')} patients={counts.patients.ALL} tests={counts.tests.ALL}
+            active={filter === 'ALL'} onClick={() => setFilter('ALL')}
+          />
+          {FILTER_STAGES.map((st) => (
+            <FilterChip
+              key={st.key} label={t(st.labelKey)}
+              patients={counts.patients[st.key as Exclude<StageKey, 'OTHER'>]}
+              tests={counts.tests[st.key as Exclude<StageKey, 'OTHER'>]}
+              dot={st.accent.dot} active={filter === st.key} onClick={() => setFilter(st.key as FilterKey)}
+            />
+          ))}
+        </div>
+        <div className="ms-auto shrink-0">
+          <Button variant={activeFilters > 0 ? 'primary' : 'outline'} onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen} aria-label={t('lab.filters')} title={t('lab.filters')}>
+            <SlidersHorizontal className="h-4 w-4" />
+            <span className="hidden sm:inline">{t('lab.filters')}</span>
+            {activeFilters > 0 && ` (${activeFilters})`}
           </Button>
         </div>
-      )}
-
-      {/* Filter chips double as the colour key: every chip shows the same dot
-          that heads its group inside the cards. */}
-      <div className="flex flex-wrap gap-2">
-        <FilterChip
-          label={t('lab.filterAll')} patients={counts.patients.ALL} tests={counts.tests.ALL}
-          active={filter === 'ALL'} onClick={() => setFilter('ALL')}
-        />
-        {FILTER_STAGES.map((st) => (
-          <FilterChip
-            key={st.key} label={t(st.labelKey)}
-            patients={counts.patients[st.key as Exclude<StageKey, 'OTHER'>]}
-            tests={counts.tests[st.key as Exclude<StageKey, 'OTHER'>]}
-            dot={st.accent.dot} active={filter === st.key} onClick={() => setFilter(st.key as FilterKey)}
-          />
-        ))}
       </div>
+
+      {filtersOpen && (
+        <div className="card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div>
+            <label className="label" htmlFor="bf-from">{t('lab.filterFrom')}</label>
+            <input id="bf-from" type="date" value={filters.from ?? ''} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value || undefined }))} className="field" />
+          </div>
+          <div>
+            <label className="label" htmlFor="bf-to">{t('lab.filterTo')}</label>
+            <input id="bf-to" type="date" value={filters.to ?? ''} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value || undefined }))} className="field" />
+          </div>
+          <div>
+            <span className="label">{t('lab.filterDepartment')}</span>
+            <Select
+              value={filters.departmentId ?? ''}
+              onChange={(v) => setFilters((f) => ({ ...f, departmentId: v || undefined }))}
+              options={[{ value: '', label: t('lab.anyDepartment') }, ...options.departments.map((d) => ({ value: d.id, label: d.name }))]}
+            />
+          </div>
+          <div>
+            <span className="label">{t('lab.filterStatus')}</span>
+            <Select
+              value={filters.testStatus ?? ''}
+              onChange={(v) => setFilters((f) => ({ ...f, testStatus: v || undefined }))}
+              options={[{ value: '', label: t('lab.anyStatus') }, ...['BOOKED', 'SAMPLE_COLLECTED', 'SAMPLE_DISPATCHED', 'SAMPLE_RECEIVED', 'IN_PROGRESS', 'RESULT_SAVED', 'APPROVED', 'PRINTED', 'DELIVERED', 'RETAKE'].map((st) => ({ value: st, label: t(`status.${st}`) }))]}
+            />
+          </div>
+          <div>
+            <span className="label">{t('lab.filterPartner')}</span>
+            <Select
+              value={filters.partnerLabId ?? ''}
+              onChange={(v) => setFilters((f) => ({ ...f, partnerLabId: v || undefined }))}
+              options={[
+                { value: '', label: t('lab.anyPatients') },
+                { value: 'NONE', label: t('lab.walkInsOnly') },
+                { value: 'ANY', label: t('lab.anyPartner') },
+                ...options.partners.map((x) => ({ value: x.id, label: x.name })),
+              ]}
+            />
+          </div>
+          {activeFilters > 0 && (
+            <div className="sm:col-span-2 lg:col-span-5">
+              <Button variant="ghost" size="sm" onClick={() => setFilters({})}><X className="h-3.5 w-3.5" /> {t('lab.clearFilters')}</Button>
+            </div>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <WorkboardSkeleton />
       ) : shown.length === 0 ? (
         <EmptyState label={filter === 'ALL' ? t('lab.noVisits') : t('lab.allClear')} />
       ) : (
-        <div className="stagger grid items-start gap-4 md:grid-cols-2">
-          {shown.map((v) => (
-            <PatientCard key={v.id} visit={v} onAdvance={advance} onCollectAll={collectAll} onUndo={undoCollect} onRetake={retake} onDelay={delay} />
+        <div className="stagger flex items-start gap-4">
+          {columns.map((col, i) => (
+            <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
+              {col.map((v) => (
+                <PatientCard key={v.id} visit={v} onAdvance={advance} onCollectAll={collectAll} onUndo={undoCollect} onRetake={retake} onDelay={delay} />
+              ))}
+            </div>
           ))}
         </div>
       )}
     </div>
   );
+}
+
+/** Two columns from the md breakpoint up, matching the skeleton. */
+function useColumnCount() {
+  const [n, setN] = useState(1);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const update = () => setN(mq.matches ? 2 : 1);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
+  }, []);
+  return n;
+}
+
+/** Rough pixel height of a card — only has to rank columns, not be exact. */
+function estimateCardHeight(v: WorkVisitDTO): number {
+  const stages = new Set(v.lines.map((l) => stageOf(l.status).key)).size;
+  const lineExtras = v.lines.reduce((h, l) => h
+    + (l.bookingRemarks ? 18 : 0) + (l.delayReason ? 18 : 0) + (l.outsourcedTo ? 18 : 0)
+    + (isOverdue(l) || RETAKEABLE.has(l.status) ? 22 : 0), 0);
+  return 90 + (v.notes ? 20 + Math.ceil(v.notes.length / 60) * 18 : 0)
+    + stages * 40 + v.lines.length * 48 + lineExtras;
 }
 
 function FilterChip({
@@ -318,7 +435,7 @@ function FilterChip({
       aria-pressed={active}
       title={`${patientsText} · ${testsText}`}
       className={cn(
-        'inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-all',
+        'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-all',
         active
           ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
           : 'border-line bg-surface text-muted hover:border-brand-300 hover:text-brand-600',
@@ -511,6 +628,10 @@ type ReasonHandler = (orderLineId: string, reason: string) => Promise<boolean>;
 
 const RETAKEABLE = new Set(['SAMPLE_COLLECTED', 'SAMPLE_RECEIVED', 'IN_PROGRESS']);
 
+// Secondary row actions: quiet text links so the one main action keeps the space.
+const SECONDARY =
+  'inline-flex items-center gap-1 rounded text-xs font-medium text-muted transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:text-brand-300';
+
 function TestRow({
   line, visitId, onAdvance, onUndo, onRetake, onDelay,
 }: {
@@ -553,7 +674,10 @@ function TestRow({
   }
   const { t } = useI18n();
   const cfg = lineAction(line, visitId);
+  const f = useFeatures();
   const overdue = isOverdue(line);
+  const collectedNoResults = line.status === 'SAMPLE_COLLECTED' && !line.hasResults;
+  const showSecondary = collectedNoResults || (!asking && ((f['lab.retake'] && RETAKEABLE.has(line.status) && !line.hasResults) || overdue));
 
   const btn = cfg && (
     <Button variant={cfg.variant} size="sm" onClick={cfg.advanceTo ? () => onAdvance(line.id, cfg.advanceTo!) : undefined}>
@@ -562,7 +686,7 @@ function TestRow({
   );
 
   return (
-    <Row>
+    <Row className="flex-wrap">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm font-semibold text-body">{line.testName}</span>
@@ -582,6 +706,31 @@ function TestRow({
             </span>
           )}
         </div>
+        {showSecondary && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {/* A mis-tapped Collect is put right here, while nothing depends on it. */}
+            {line.status === 'SAMPLE_COLLECTED' && !line.hasResults && (
+              <button type="button" className={SECONDARY} onClick={() => onUndo(line.id)} title={t('lab.undoCollect')}>
+                <Undo2 className="h-3.5 w-3.5" /> {t('lab.undo')}
+              </button>
+            )}
+            {f['lab.retake'] && !asking && RETAKEABLE.has(line.status) && !line.hasResults && (
+              <button type="button" className={SECONDARY} onClick={() => { setAsking('RETAKE'); setReason(''); }} title={t('lab.retakeReason')}>
+                <RotateCcw className="h-3.5 w-3.5" /> {t('lab.retake')}
+              </button>
+            )}
+            {f['lab.sendOut'] && !asking && line.status === 'SAMPLE_COLLECTED' && !line.hasResults && (
+              <button type="button" className={SECONDARY} onClick={() => void openSendOut()} title={t('lab.sendOutHint')}>
+                <Send className="h-3.5 w-3.5" /> {t('lab.sendOut')}
+              </button>
+            )}
+            {!asking && overdue && (
+              <button type="button" className={SECONDARY} onClick={() => { setAsking('DELAY'); setReason(line.delayReason ?? ''); }} title={t('lab.delayReason')}>
+                <Clock className="h-3.5 w-3.5" /> {t('lab.delay')}
+              </button>
+            )}
+          </div>
+        )}
         {line.bookingRemarks && (
           <div className="mt-0.5 truncate text-xs text-brand-700 dark:text-brand-300">{t('lab.bookingNote').replace('{note}', line.bookingRemarks)}</div>
         )}
@@ -591,68 +740,51 @@ function TestRow({
         {line.outsourcedTo && (
           <div className="mt-0.5 truncate text-xs font-medium text-info-text">{t('lab.sentTo').replace('{lab}', line.outsourcedTo)}</div>
         )}
-        {asking === 'SEND' && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            {refLabs.length === 0 ? (
-              <span className="text-xs text-warn-text">{t('lab.noRefLabs')}</span>
-            ) : (
-              <>
-                <Select value={refLab} onChange={setRefLab} options={refLabs.map((l) => ({ value: l.id, label: l.name }))} className="min-w-40 flex-1" />
-                <input
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  maxLength={60}
-                  placeholder={t('lab.refNo')}
-                  aria-label={t('lab.refNo')}
-                  className="field w-32 py-1.5 text-sm"
-                />
-                <Button size="sm" onClick={() => void submitSendOut()} loading={saving} disabled={!refLab}>{t('lab.sendOut')}</Button>
-              </>
-            )}
-            <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>{t('common.cancel')}</Button>
-          </div>
-        )}
-        {asking && asking !== 'SEND' && (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <input
-              autoFocus
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void submitReason(); if (e.key === 'Escape') setAsking(null); }}
-              maxLength={200}
-              placeholder={asking === 'RETAKE' ? t('lab.retakeReason') : t('lab.delayReason')}
-              aria-label={asking === 'RETAKE' ? t('lab.retakeReason') : t('lab.delayReason')}
-              className="field min-w-0 flex-1 py-1.5 text-sm"
-            />
-            <Button size="sm" onClick={() => void submitReason()} loading={saving} disabled={!reason.trim()}>{t('lab.saveReason')}</Button>
-            <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>{t('common.cancel')}</Button>
-          </div>
-        )}
       </div>
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-        {/* A mis-tapped Collect is put right here, while nothing depends on it. */}
-        {line.status === 'SAMPLE_COLLECTED' && !line.hasResults && (
-          <Button variant="ghost" size="sm" onClick={() => onUndo(line.id)} title={t('lab.undoCollect')}>
-            <Undo2 className="h-3.5 w-3.5" /> {t('lab.undo')}
-          </Button>
-        )}
-        {!asking && RETAKEABLE.has(line.status) && !line.hasResults && (
-          <Button variant="ghost" size="sm" onClick={() => { setAsking('RETAKE'); setReason(''); }} title={t('lab.retakeReason')}>
-            <RotateCcw className="h-3.5 w-3.5" /> {t('lab.retake')}
-          </Button>
-        )}
-        {!asking && line.status === 'SAMPLE_COLLECTED' && !line.hasResults && (
-          <Button variant="ghost" size="sm" onClick={() => void openSendOut()} title={t('lab.sendOutHint')}>
-            <Send className="h-3.5 w-3.5" /> {t('lab.sendOut')}
-          </Button>
-        )}
-        {!asking && overdue && (
-          <Button variant="ghost" size="sm" onClick={() => { setAsking('DELAY'); setReason(line.delayReason ?? ''); }} title={t('lab.delayReason')}>
-            <Clock className="h-3.5 w-3.5" /> {t('lab.delay')}
-          </Button>
-        )}
+      <div className="shrink-0">
         {cfg?.href ? <Link href={cfg.href}>{btn}</Link> : btn}
       </div>
+      {asking && (
+        <div className="basis-full">
+          {asking === 'SEND' && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {refLabs.length === 0 ? (
+                <span className="text-xs text-warn-text">{t('lab.noRefLabs')}</span>
+              ) : (
+                <>
+                  <Select value={refLab} onChange={setRefLab} options={refLabs.map((l) => ({ value: l.id, label: l.name }))} className="min-w-40 flex-1" />
+                  <input
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    maxLength={60}
+                    placeholder={t('lab.refNo')}
+                    aria-label={t('lab.refNo')}
+                    className="field w-32 py-1.5 text-sm"
+                  />
+                  <Button size="sm" onClick={() => void submitSendOut()} loading={saving} disabled={!refLab}>{t('lab.sendOut')}</Button>
+                </>
+              )}
+              <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>{t('common.cancel')}</Button>
+            </div>
+          )}
+          {asking && asking !== 'SEND' && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <input
+                autoFocus
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void submitReason(); if (e.key === 'Escape') setAsking(null); }}
+                maxLength={200}
+                placeholder={asking === 'RETAKE' ? t('lab.retakeReason') : t('lab.delayReason')}
+                aria-label={asking === 'RETAKE' ? t('lab.retakeReason') : t('lab.delayReason')}
+                className="field min-w-40 flex-1 py-1.5 text-sm"
+              />
+              <Button size="sm" onClick={() => void submitReason()} loading={saving} disabled={!reason.trim()}>{t('lab.saveReason')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>{t('common.cancel')}</Button>
+            </div>
+          )}
+        </div>
+      )}
     </Row>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, FlaskConical, Plus, Search } from 'lucide-react';
+import { ChevronRight, FlaskConical, Percent, Plus, Search } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { buttonVariants } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -41,9 +41,14 @@ export function TestsListClient() {
         title={t('admin.tests')}
         back={{ href: '/admin', label: t('admin.title') }}
         actions={
-          <Link href="/admin/tests/new" className={buttonVariants()}>
-            <Plus className="h-4 w-4" /> {t('admin.addTest')}
-          </Link>
+          <>
+            <Link href="/admin/tests/change-rates" className={buttonVariants({ variant: 'outline' })}>
+              <Percent className="h-4 w-4" /> {t('rates.title')}
+            </Link>
+            <Link href="/admin/tests/new" className={buttonVariants()}>
+              <Plus className="h-4 w-4" /> {t('admin.addTest')}
+            </Link>
+          </>
         }
       />
 

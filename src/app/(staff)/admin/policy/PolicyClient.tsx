@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { CreditCard, ShieldCheck } from 'lucide-react';
+import { CreditCard, History, ShieldCheck } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { SectionHeading, ACCENT } from '@/components/ui/List';
 import { useToast } from '@/components/ui/Toast';
@@ -36,6 +36,10 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
         familyCardFee: p.familyCardFee,
         familyCardDiscountOnIssue: p.familyCardDiscountOnIssue,
         allowSelfVerify: p.allowSelfVerify,
+        resultEditLockMins: p.resultEditLockMins,
+        refundWindowHours: p.refundWindowHours,
+        reportHistoryColumns: p.reportHistoryColumns,
+        reportHistoryByDefault: p.reportHistoryByDefault,
       });
       if (res.ok) { setP(res.policy); setSaved(res.policy); toast('success', t('policy.updated')); }
       else { setError(res.error); toast('error', res.error); }
@@ -134,6 +138,60 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
           onText={t('policy.selfVerifyOn')}
           offText={t('policy.selfVerifyOff')}
           danger={p.allowSelfVerify}
+        />
+      </Card>
+
+      <Card className="p-5">
+        <SectionHeading accent={ACCENT.violet}>{t('policy.timeLimits')}</SectionHeading>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <Field
+            label={t('policy.resultLock')}
+            hint={p.resultEditLockMins > 0
+              ? t('policy.resultLockOn').replace('{n}', String(p.resultEditLockMins))
+              : t('policy.resultLockOff')}
+            suffix={t('policy.mins')}
+            value={p.resultEditLockMins}
+            min={0}
+            max={10080}
+            step={1}
+            onChange={(v) => setP({ ...p, resultEditLockMins: Math.round(v) })}
+          />
+          <Field
+            label={t('policy.refundWindow')}
+            hint={p.refundWindowHours > 0
+              ? t('policy.refundWindowOn').replace('{n}', String(p.refundWindowHours))
+              : t('policy.refundWindowOff')}
+            suffix={t('policy.hours')}
+            value={p.refundWindowHours}
+            min={0}
+            max={8760}
+            step={1}
+            onChange={(v) => setP({ ...p, refundWindowHours: Math.round(v) })}
+          />
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <SectionHeading accent={ACCENT.emerald}>{t('policy.reports')}</SectionHeading>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <Field
+            label={t('policy.historyColumns')}
+            hint={t('policy.historyColumnsHint')}
+            value={p.reportHistoryColumns}
+            min={1}
+            max={6}
+            step={1}
+            onChange={(v) => setP({ ...p, reportHistoryColumns: Math.min(6, Math.max(1, Math.round(v))) })}
+          />
+        </div>
+        <Toggle
+          className="mt-4"
+          icon={History}
+          label={t('policy.historyDefault')}
+          on={p.reportHistoryByDefault}
+          onChange={(v) => setP({ ...p, reportHistoryByDefault: v })}
+          onText={t('policy.historyDefaultOn')}
+          offText={t('policy.historyDefaultOff')}
         />
       </Card>
 

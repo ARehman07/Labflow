@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { BadgePercent, CalendarClock, Check, CircleAlert, CreditCard, Keyboard, MessageSquareText, Package, Plus, RotateCcw, Search, StickyNote, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BadgePercent, CalendarClock, Check, CircleAlert, CreditCard, Keyboard, MessageSquareText, Package, Plus, RotateCcw, Search, StickyNote, UserPlus, Users } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
+import { useFeatures } from '@/core/features/FeaturesProvider';
+import { SAMPLE_SOURCE_FEATURES } from '@/core/features/catalog';
 import {
   describeCardForBookingAction,
   currentCardForPatientAction,
@@ -61,6 +63,12 @@ export function BookingClient() {
   const { t } = useI18n();
   const router = useRouter();
   const toast = useToast();
+  const f = useFeatures();
+
+  // Booking goes step by step — patient, tests, sample, billing — so each screen
+  // asks one thing, instead of every option at once on one long page.
+  const [step, setStep] = useState(0);
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step]);
 
   const [patientQuery, setPatientQuery] = useState('');
   const [patientResults, setPatientResults] = useState<PatientDTO[]>([]);
@@ -201,6 +209,7 @@ export function BookingClient() {
     setNewCardClash(null);
     setNewCardMobile(selected?.mobile ?? '');
     if (!selected) { setOwnCard(null); return; }
+    if (!f['booking.familyCards']) { setOwnCard(null); setSuggested(null); return; }
     currentCardForPatientAction(selected.id).then(setOwnCard).catch(() => setOwnCard(null));
 
     // Two numbers are worth checking without being asked: the patient's own,
@@ -216,7 +225,7 @@ export function BookingClient() {
       }
       setSuggested(null);
     })();
-  }, [selected, patientQuery]);
+  }, [selected, patientQuery, f]);
 
   const joinDeb = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
@@ -282,6 +291,12 @@ export function BookingClient() {
   const packagedTestIds = new Set(cartPackages.flatMap((p) => p.tests.map((x) => x.id)));
   const total = cart.reduce((s, c) => s + c.price, 0) + cartPackages.reduce((s, p) => s + p.price, 0);
   const cartEmpty = cart.length === 0 && cartPackages.length === 0;
+  const testCount = cart.length + cartPackages.reduce((s, p) => s + p.tests.length, 0);
+  /** A step opens once the ones before it have what they need: a patient, then a test. */
+  const canReach = (i: number) => i === 0 || (i === 1 ? !!selected : !!selected && !cartEmpty);
+  // Choosing the patient only moves on by itself when nothing else is asked on
+  // this step. With referring doctors on, the doctor is chosen here first.
+  const choosePatient = (p: PatientDTO) => { setSelected(p); if (!f['booking.referringDoctor']) setStep(1); };
   const partner = partners.find((x) => x.id === partnerId) ?? null;
   const billedToPartner = partner != null && partner.accountType !== 'CASH';
 
@@ -418,17 +433,39 @@ export function BookingClient() {
   // Keyboard: the counter types more than it clicks. Alt+P and Alt+T jump to
   // the two searches; Ctrl+Enter saves. Read through a ref so the listener,
   // bound once, always calls the current booking.
+  // Only the ways of taking a sample this lab uses; with just one there is nothing to ask.
+  const sampleOptions = (Object.keys(SAMPLE_SOURCE_FEATURES) as (keyof typeof SAMPLE_SOURCE_FEATURES)[])
+    .filter((src) => f[SAMPLE_SOURCE_FEATURES[src]])
+    .map((src) => ({ value: src, label: t(`sample.${src}`) }));
+  useEffect(() => {
+    if (!sampleOptions.some((o) => o.value === sampleSource) && sampleOptions[0]) setSampleSource(sampleOptions[0].value);
+  }, [sampleOptions, sampleSource]);
+  // One kind of discount switched off leaves only the other to choose.
+  useEffect(() => {
+    if (!f['booking.familyCards'] && discountSource === 'CARD') setDiscountSource('MANUAL');
+    if (!f['booking.manualDiscount'] && discountSource === 'MANUAL') setDiscountSource('CARD');
+  }, [f, discountSource]);
+  const showCP = f['booking.collectionPoints'] && collectionPoints.length > 0;
+  const showB2B = f['booking.b2b'] && partners.length > 0;
+  const counterGroups = rateGroups.filter((g) => g.atCounter);
+  const discountsOn = f['booking.familyCards'] || f['booking.manualDiscount'];
+
+  // Ctrl+Enter moves on a step, and books on the last one.
   const bookRef = useRef(book);
-  bookRef.current = book;
+  bookRef.current = () => {
+    if (step < 3) { if (canReach(step + 1)) setStep(step + 1); } else book();
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey && e.code === 'KeyP') {
         e.preventDefault();
+        setStep(0);
         setPatientTab('EXISTING');
-        setTimeout(() => patientBox.current?.querySelector('input')?.focus(), 0);
+        setTimeout(() => patientBox.current?.querySelector('input')?.focus(), 50);
       } else if (e.altKey && e.code === 'KeyT') {
         e.preventDefault();
-        testBox.current?.querySelector('input')?.focus();
+        setStep((s) => (s === 0 ? s : 1));
+        setTimeout(() => testBox.current?.querySelector('input')?.focus(), 50);
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         bookRef.current();
@@ -450,6 +487,15 @@ export function BookingClient() {
     right: formatPkr(tst.price),
   }));
 
+  const STEPS = ['PATIENT', 'TESTS', 'SAMPLE', 'BILLING'] as const;
+  const summaries = [
+    selected?.fullName ?? null,
+    cartEmpty ? null : `${(testCount === 1 ? t('book.oneTest') : t('book.nTests').replace('{n}', String(testCount)))} · ${formatPkr(total)}`,
+    step > 2 ? t(`sample.${sampleSource}`) : null,
+    step === 3 ? formatPkr(net) : null,
+  ];
+  const done = [!!selected, !cartEmpty, step > 2, false];
+
   return (
     <div className="page">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -458,107 +504,191 @@ export function BookingClient() {
           <Keyboard className="h-3.5 w-3.5 self-center" aria-hidden />
           <span><kbd className={kbd}>Alt+P</kbd> {t('shortcut.patient')}</span>
           <span><kbd className={kbd}>Alt+T</kbd> {t('shortcut.test')}</span>
-          <span><kbd className={kbd}>Ctrl+Enter</kbd> {t('shortcut.save')}</span>
+          <span><kbd className={kbd}>Ctrl+Enter</kbd> {t('book.shortcutNext')}</span>
         </p>
       </div>
 
-      {/*
-        Booking is two jobs: deciding WHO and WHAT, then settling HOW MUCH.
-        Stacked in one column they read as one long form, the money half sat
-        below the fold, and the space beside it went to waste. Side by side,
-        the total stays in view while tests are added. Written with logical
-        flow only — no left/right — so RTL mirrors the whole thing for free.
-      */}
-      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_24rem]">
-        {/* ── Who and what ─────────────────────────────────────── */}
-        <div className="space-y-5">
-          {/* Patient */}
-          <Card className="p-5">
-            <div className="section-title mb-3">{t('reception.patient')}</div>
-            {selected ? (
-              <div className="flex items-center justify-between gap-3 rounded-xl bg-brand-500/8 p-3.5 ring-1 ring-brand-500/20">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">
-                    {selected.fullName.slice(0, 1)}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate font-semibold text-strong">{selected.fullName}</div>
-                    <div className="truncate text-sm text-muted">
-                      {selected.mrNo}
-                      {selected.age != null && ` · ${selected.age} ${t('common.years')}`}
-                      {selected.sex && ` · ${t(`reception.${selected.sex.toLowerCase()}`)}`}
-                      {selected.mobile && ` · ${selected.mobile}`}
+      {/* Where the booking is. A finished step shows what was chosen, and any
+          step whose earlier steps are complete can be opened directly. */}
+      <nav aria-label={t('book.progress')} className="card p-1.5">
+        <ol className="grid grid-cols-4 gap-1">
+          {STEPS.map((s, i) => {
+            const current = i === step;
+            const reachable = canReach(i);
+            return (
+              <li key={s}>
+                <button
+                  type="button"
+                  disabled={!reachable}
+                  onClick={() => setStep(i)}
+                  aria-current={current ? 'step' : undefined}
+                  className={cn(
+                    'flex w-full items-center justify-center gap-2.5 rounded-xl px-2 py-2 text-start transition-colors sm:justify-start',
+                    current ? 'bg-brand-500/10' : reachable ? 'hover:bg-surface-2' : 'cursor-not-allowed opacity-50',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold transition-colors',
+                      current ? 'bg-brand-600 text-white' : done[i] ? 'bg-ok-soft text-ok-text' : 'bg-surface-3 text-muted',
+                    )}
+                  >
+                    {done[i] && !current ? <Check className="h-3.5 w-3.5" /> : i + 1}
+                  </span>
+                  <span className="hidden min-w-0 sm:block">
+                    <span className={cn('block text-sm font-semibold', current ? 'text-brand-700 dark:text-brand-300' : 'text-body')}>{t(`book.step.${s}`)}</span>
+                    <span className="block truncate text-xs text-subtle">{summaries[i] ?? t(`book.stepHint.${s}`)}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+        <p className="px-2.5 pb-1 pt-1.5 text-sm font-semibold text-strong sm:hidden">
+          {t('book.stepOf').replace('{n}', String(step + 1))} · {t(`book.step.${STEPS[step]}`)}
+        </p>
+      </nav>
+
+      <div className="mx-auto w-full max-w-3xl space-y-4">
+        {step === 0 && (
+          <>
+            <Card className="p-5">
+              <div className="section-title mb-3">{t('reception.patient')}</div>
+              {selected ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-brand-500/8 p-3.5 ring-1 ring-brand-500/20">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-600 text-sm font-bold text-white">
+                      {selected.fullName.slice(0, 1)}
                     </div>
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-strong">{selected.fullName}</div>
+                      <div className="truncate text-sm text-muted">
+                        {selected.mrNo}
+                        {selected.age != null && ` · ${selected.age} ${t('common.years')}`}
+                        {selected.sex && ` · ${t(`reception.${selected.sex.toLowerCase()}`)}`}
+                        {selected.mobile && ` · ${selected.mobile}`}
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { setSelected(null); setPatientQuery(''); setPatientTab('EXISTING'); }}
+                  >
+                    {t('reception.change')}
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Segmented
+                    value={patientTab}
+                    onChange={setPatientTab}
+                    ariaLabel={t('reception.patient')}
+                    options={[
+                      { value: 'EXISTING', label: t('reception.tabExisting'), icon: <Search className="h-4 w-4 shrink-0" /> },
+                      { value: 'NEW', label: t('reception.tabNew'), icon: <UserPlus className="h-4 w-4 shrink-0" /> },
+                    ]}
+                  />
+                  <div className="mt-3">
+                    {patientTab === 'EXISTING' ? (
+                      <div ref={patientBox}>
+                      <Combobox
+                        query={patientQuery}
+                        onQueryChange={setPatientQuery}
+                        items={patientItems}
+                        onSelect={(it) => { const p = patientResults.find((x) => x.id === it.id); if (p) choosePatient(p); }}
+                        placeholder={t('reception.searchPatient')}
+                        loading={patLoading}
+                        minChars={2}
+                        emptyText={t('reception.noResults')}
+                        leftIcon={<Icon name="search" className="h-4 w-4" />}
+                      />
+                      </div>
+                    ) : (
+                      /* A number typed into the search that found nobody is
+                         almost always the new patient's own — carry it over
+                         rather than making them read it out twice. */
+                      <AddPatientForm
+                        framed={false}
+                        initialMobile={/^0\d{0,10}$/u.test(patientQuery.trim()) ? patientQuery.trim() : ''}
+                        onCreated={(p) => { choosePatient(p); toast('success', p.mrNo); }}
+                        onUseExisting={(p) => choosePatient(p)}
+                        onCancel={() => setPatientTab('EXISTING')}
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+            </Card>
+
+            {/* Money still owed from earlier visits — said at the counter, where it can be collected. */}
+            {selected && dues && dues.total > 0 && (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-warn-text" role="status">
+                <CircleAlert className="h-5 w-5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold">{t('reception.duesTitle').replace('{amount}', formatPkr(dues.total))}</div>
+                  <div className="text-xs opacity-80">
+                    {t('reception.duesSlips').replace('{slips}', dues.invoices.map((i) => `#${i.slipNo}`).join(', '))}
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => { setSelected(null); setPatientQuery(''); setPatientTab('EXISTING'); }}
-                >
-                  {t('reception.change')}
-                </Button>
+                <a href={`/billing?invoice=${dues.invoices[0].invoiceId}`} className="shrink-0 text-sm font-semibold underline underline-offset-2">
+                  {t('reception.duesCollect')}
+                </a>
               </div>
-            ) : (
-              <>
-                <Segmented
-                  value={patientTab}
-                  onChange={setPatientTab}
-                  ariaLabel={t('reception.patient')}
-                  options={[
-                    { value: 'EXISTING', label: t('reception.tabExisting'), icon: <Search className="h-4 w-4 shrink-0" /> },
-                    { value: 'NEW', label: t('reception.tabNew'), icon: <UserPlus className="h-4 w-4 shrink-0" /> },
-                  ]}
-                />
-                <div className="mt-3">
-                  {patientTab === 'EXISTING' ? (
-                    <div ref={patientBox}>
-                    <Combobox
-                      query={patientQuery}
-                      onQueryChange={setPatientQuery}
-                      items={patientItems}
-                      onSelect={(it) => { const p = patientResults.find((x) => x.id === it.id); if (p) setSelected(p); }}
-                      placeholder={t('reception.searchPatient')}
-                      loading={patLoading}
-                      minChars={2}
-                      emptyText={t('reception.noResults')}
-                      leftIcon={<Icon name="search" className="h-4 w-4" />}
-                    />
-                    </div>
-                  ) : (
-                    /* A number typed into the search that found nobody is
-                       almost always the new patient's own — carry it over
-                       rather than making them read it out twice. */
-                    <AddPatientForm
-                      framed={false}
-                      initialMobile={/^0\d{0,10}$/u.test(patientQuery.trim()) ? patientQuery.trim() : ''}
-                      onCreated={(p) => { setSelected(p); toast('success', p.mrNo); }}
-                      onUseExisting={(p) => setSelected(p)}
-                      onCancel={() => setPatientTab('EXISTING')}
-                    />
+            )}
+
+            {f['booking.referringDoctor'] && (<Card className="p-5">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="label">{t('reception.doctor')}</span>
+                  {!addingDoctor && (
+                    <button
+                      type="button"
+                      onClick={() => { setAddingDoctor(true); setDocError(null); }}
+                      className="mb-1.5 inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                    >
+                      <Plus className="h-3 w-3" /> {t('reception.addDoctor')}
+                    </button>
                   )}
                 </div>
-              </>
-            )}
-          </Card>
-
-          {/* Money still owed from earlier visits — said at the counter, where it can be collected. */}
-          {selected && dues && dues.total > 0 && (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-warn-text" role="status">
-              <CircleAlert className="h-5 w-5 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold">{t('reception.duesTitle').replace('{amount}', formatPkr(dues.total))}</div>
-                <div className="text-xs opacity-80">
-                  {t('reception.duesSlips').replace('{slips}', dues.invoices.map((i) => `#${i.slipNo}`).join(', '))}
-                </div>
+                {addingDoctor ? (
+                  <div className="space-y-2 rounded-xl border border-dashed border-brand-300/60 bg-brand-500/5 p-3">
+                    <input
+                      className="field"
+                      autoFocus
+                      value={docName}
+                      onChange={(e) => setDocName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveDoctor(); } }}
+                      placeholder={t('reception.doctorName')}
+                    />
+                    <input
+                      className="field"
+                      value={docClinic}
+                      onChange={(e) => setDocClinic(e.target.value)}
+                      placeholder={t('reception.doctorClinic')}
+                    />
+                    {docError && <p className="text-sm text-danger-text"><Tr text={docError} /></p>}
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={saveDoctor} loading={docSaving} disabled={docName.trim().length < 2}>
+                        {t('reception.addDoctorSave')}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setAddingDoctor(false)}>{t('common.cancel')}</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Select
+                    value={doctorId}
+                    onChange={setDoctorId}
+                    placeholder={t('common.none')}
+                    options={[{ value: '', label: t('common.none') }, ...doctors.map((d) => ({ value: d.id, label: d.name }))]}
+                  />
+                )}
               </div>
-              <a href={`/billing?invoice=${dues.invoices[0].invoiceId}`} className="shrink-0 text-sm font-semibold underline underline-offset-2">
-                {t('reception.duesCollect')}
-              </a>
-            </div>
-          )}
+            </Card>)}
+          </>
+        )}
 
-          {/* Tests */}
+        {step === 1 && (
           <Card className="p-5">
             <div className="section-title mb-3">{t('reception.tests')}</div>
             <div ref={testBox}>
@@ -577,7 +707,7 @@ export function BookingClient() {
             />
             </div>
 
-            {packages.some((p) => !cartPackages.some((x) => x.id === p.id)) && (
+            {f['booking.packages'] && packages.some((p) => !cartPackages.some((x) => x.id === p.id)) && (
               <div className="mt-3">
                 <Select
                   value=""
@@ -593,7 +723,7 @@ export function BookingClient() {
               </div>
             )}
 
-            {(lastVisitNew || popularShown.length > 0) && (
+            {f['booking.quickPicks'] && (lastVisitNew || popularShown.length > 0) && (
               <div className="mt-3 space-y-3">
                 {lastVisit && lastVisitNew && (
                   <button
@@ -675,14 +805,14 @@ export function BookingClient() {
                           className="flex h-6 w-6 items-center justify-center rounded-full text-subtle transition-colors hover:bg-danger-soft hover:text-red-600"
                           aria-label={t('common.remove')}
                         >✕</button>
-                        <button
+                        {f['booking.testNotes'] && (<button
                           type="button"
                           onClick={() => setNoteOpen(noteOpen === c.id ? null : c.id)}
                           className={cn('order-first flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:bg-surface-3',
                             testRemarks[c.id]?.trim() ? 'text-brand-600 dark:text-brand-300' : 'text-subtle')}
                           aria-label={t('reception.testNote')}
                           title={t('reception.testNote')}
-                        ><StickyNote className="h-3.5 w-3.5" /></button>
+                        ><StickyNote className="h-3.5 w-3.5" /></button>)}
                       </span>
                       {noteOpen === c.id && (
                         <input
@@ -701,476 +831,455 @@ export function BookingClient() {
               )}
             </div>
           </Card>
+        )}
 
-          {/* Sample and report — where the tube is drawn, and the time the patient is told to come back. */}
-          <Card className="p-5">
-            <div className="section-title mb-3 flex items-center gap-1.5">
-              <CalendarClock className="h-4 w-4" /> {t('reception.collection')}
-            </div>
-            <span className="label">{t('reception.sampleSource')}</span>
-            <Segmented
-              size="sm"
-              value={sampleSource}
-              onChange={setSampleSource}
-              ariaLabel={t('reception.sampleSource')}
-              options={[
-                { value: 'INSIDE_LAB', label: t('sample.INSIDE_LAB') },
-                { value: 'OUTSIDE_LAB', label: t('sample.OUTSIDE_LAB') },
-                { value: 'HOME', label: t('sample.HOME') },
-                { value: 'EXISTING', label: t('sample.EXISTING') },
-              ]}
-            />
-            <label className="label mt-3" htmlFor="report-due">{t('reception.reportDue')}</label>
-            <input
-              id="report-due"
-              type="datetime-local"
-              value={reportDue}
-              onChange={(e) => setReportDue(e.target.value)}
-              className="field"
-            />
-            <p className="mt-1.5 text-xs text-subtle">{t('reception.reportDueHint')}</p>
-          </Card>
+        {step === 2 && (
+          <>
+            {sampleOptions.length > 1 || f['booking.reportDue'] || showCP || showB2B ? (
+            <Card className="space-y-4 p-5">
+              <div className="section-title flex items-center gap-1.5">
+                <CalendarClock className="h-4 w-4" /> {t('reception.collection')}
+              </div>
+              <div>
+                {sampleOptions.length > 1 && (<>
+                  <span className="label">{t('reception.sampleSource')}</span>
+                  <Segmented size="sm" value={sampleSource} onChange={setSampleSource} ariaLabel={t('reception.sampleSource')} options={sampleOptions} />
+                </>)}
+                {f['booking.reportDue'] && (<>
+                <label className="label mt-3" htmlFor="report-due">{t('reception.reportDue')}</label>
+                <input
+                  id="report-due"
+                  type="datetime-local"
+                  value={reportDue}
+                  onChange={(e) => setReportDue(e.target.value)}
+                  className="field"
+                />
+                <p className="mt-1.5 text-xs text-subtle">{t('reception.reportDueHint')}</p>
+                </>)}
+              </div>
+              {(showCP || showB2B) && (
+                <div className="grid gap-3 border-t border-line pt-4 sm:grid-cols-2">
+                  {showCP && (
+                    <div>
+                      <span className="label">{t('reception.collectionPoint')}</span>
+                      <Select
+                        value={collectionPointId}
+                        onChange={(v) => {
+                          setCollectionPointId(v);
+                          const cp = collectionPoints.find((x) => x.id === v);
+                          if (cp?.rateGroupId) choosePriceList(cp.rateGroupId);
+                        }}
+                        options={[{ value: '', label: t('reception.noCollectionPoint') }, ...collectionPoints.map((c) => ({ value: c.id, label: c.name }))]}
+                      />
+                    </div>
+                  )}
+              {showB2B && (
+                <div className="contents">
+                  <div>
+                    <span className="label">{t('reception.bookedFor')}</span>
+                    <Select
+                      value={partnerId}
+                      onChange={(v) => {
+                        setPartnerId(v);
+                        const pl = partners.find((x) => x.id === v);
+                        if (pl?.rateGroupId) choosePriceList(pl.rateGroupId);
+                      }}
+                      options={[{ value: '', label: t('reception.walkIn') }, ...partners.map((x) => ({ value: x.id, label: x.name }))]}
+                    />
+                  </div>
+                  {partnerId && (
+                    <div>
+                      <label className="label" htmlFor="b2b-no">{t('reception.b2bNo')}</label>
+                      <input id="b2b-no" value={b2bNo} onChange={(e) => setB2bNo(e.target.value)} maxLength={40} className="field" />
+                    </div>
+                  )}
+                </div>
+              )}
+                </div>
+              )}
+            </Card>
+            ) : (
+              <Card className="p-5 text-sm text-muted">{t('book.sampleNothing').replace('{source}', t(`sample.${sampleSource}`))}</Card>
+            )}
 
-          {/* Comments — anything the lab or the record needs that has no field
-              of its own: an instruction, who referred them, why a discount. */}
-          <Card className="p-5">
-            <label htmlFor="booking-notes" className="section-title mb-3 flex items-center gap-1.5">
-              <MessageSquareText className="h-4 w-4" /> {t('reception.notes')}
-            </label>
-            <textarea
-              id="booking-notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              maxLength={500}
-              rows={3}
-              placeholder={t('reception.notesPlaceholder')}
-              className="field min-h-[5.5rem] resize-y leading-relaxed"
-            />
-            <p className="mt-1.5 flex justify-between gap-3 text-xs text-subtle">
-              <span>{t('reception.notesHint')}</span>
-              <span className="shrink-0 tabular-nums">{notes.length}/500</span>
-            </p>
-          </Card>
-        </div>
+            {f['booking.comments'] && (<Card className="p-5">
+              <label htmlFor="booking-notes" className="section-title mb-3 flex items-center gap-1.5">
+                <MessageSquareText className="h-4 w-4" /> {t('reception.notes')}
+              </label>
+              <textarea
+                id="booking-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder={t('reception.notesPlaceholder')}
+                className="field min-h-[5.5rem] resize-y leading-relaxed"
+              />
+              <p className="mt-1.5 flex justify-between gap-3 text-xs text-subtle">
+                <span>{t('reception.notesHint')}</span>
+                <span className="shrink-0 tabular-nums">{notes.length}/500</span>
+              </p>
+            </Card>)}
+          </>
+        )}
 
-        {/* ── How much ─────────────────────────────────────────── */}
-        <div className="space-y-5">
-          <Card className="p-5">
-            <div className="section-title mb-3">{t('reception.billing')}</div>
-
-            {partners.length > 0 && (
-              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+        {step === 3 && (
+          <>
+            <Card className="space-y-4 p-5">
+              <div className="section-title">{t('reception.billing')}</div>
+              {f['booking.priceLists'] && counterGroups.length > 0 && (rateGroupId === '' || counterGroups.some((g) => g.id === rateGroupId)) && (
                 <div>
-                  <span className="label">{t('reception.bookedFor')}</span>
+                  <span className="label">{t('reception.priceList')}</span>
                   <Select
-                    value={partnerId}
-                    onChange={(v) => {
-                      setPartnerId(v);
-                      const pl = partners.find((x) => x.id === v);
-                      if (pl?.rateGroupId) choosePriceList(pl.rateGroupId);
-                    }}
-                    options={[{ value: '', label: t('reception.walkIn') }, ...partners.map((x) => ({ value: x.id, label: x.name }))]}
+                    value={rateGroupId}
+                    onChange={choosePriceList}
+                    options={[{ value: '', label: t('reception.standardPrices') }, ...counterGroups.map((g) => ({ value: g.id, label: g.name }))]}
                   />
                 </div>
-                {partnerId && (
-                  <div>
-                    <label className="label" htmlFor="b2b-no">{t('reception.b2bNo')}</label>
-                    <input id="b2b-no" value={b2bNo} onChange={(e) => setB2bNo(e.target.value)} maxLength={40} className="field" />
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+              {rateGroupId && !(f['booking.priceLists'] && counterGroups.some((g) => g.id === rateGroupId)) && (
+                <p className="text-sm text-muted">{t('book.priceListFrom').replace('{name}', rateGroups.find((g) => g.id === rateGroupId)?.name ?? '')}</p>
+              )}
+              {/*
+                Two questions, asked in order. First: is there a discount at all?
+                Most slips have none, so that is a switch which is off, and the
+                whole apparatus stays folded away behind it. Only then: on what
+                basis — a family card the patient holds, or someone's authority.
 
-            {(rateGroups.length > 0 || collectionPoints.length > 0) && (
-              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                {collectionPoints.length > 0 && (
-                  <div>
-                    <span className="label">{t('reception.collectionPoint')}</span>
-                    <Select
-                      value={collectionPointId}
-                      onChange={(v) => {
-                        setCollectionPointId(v);
-                        const cp = collectionPoints.find((x) => x.id === v);
-                        if (cp?.rateGroupId) choosePriceList(cp.rateGroupId);
-                      }}
-                      options={[{ value: '', label: t('reception.noCollectionPoint') }, ...collectionPoints.map((c) => ({ value: c.id, label: c.name }))]}
-                    />
-                  </div>
-                )}
-                {rateGroups.length > 0 && (
-                  <div>
-                    <span className="label">{t('reception.priceList')}</span>
-                    <Select
-                      value={rateGroupId}
-                      onChange={choosePriceList}
-                      options={[{ value: '', label: t('reception.standardPrices') }, ...rateGroups.map((g) => ({ value: g.id, label: g.name }))]}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
+                There is deliberately no free-typed amount any more. A number
+                bounded only by the bill, recorded against nobody, was the one
+                discount nobody could answer for afterwards.
+              */}
+              {discountsOn && (<div>
+                <span className="label">{t('reception.discount')}</span>
 
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="label">{t('reception.doctor')}</span>
-                {!addingDoctor && (
+                {ownCard ? null : (
+                  <Checkbox
+                    checked={discountOn}
+                    onChange={setDiscountOn}
+                    label={t('reception.discountApply')}
+                    hint={t('reception.discountApplyHint')}
+                  />
+                )}
+
+                {/* Found a card on a related number: offer it, do not make reception
+                    go looking for something they have no reason to suspect exists.
+                    Shown whether or not the discount switch is on — a switch that
+                    is off is exactly when nobody would think to look — and taking
+                    the offer turns the switch on. */}
+                {!ownCard && suggested?.info.found && !(discountOn && discountSource === 'CARD') && (
                   <button
                     type="button"
-                    onClick={() => { setAddingDoctor(true); setDocError(null); }}
-                    className="mb-1.5 inline-flex items-center gap-1 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
+                    onClick={() => {
+                      setDiscountOn(true);
+                      setDiscountSource('CARD');
+                      setCardMode('JOIN');
+                      setJoinMobile(suggested.mobile);
+                    }}
+                    className="mt-2.5 flex w-full items-center gap-2 rounded-xl border border-info-line bg-info-soft px-3.5 py-2.5 text-start text-sm text-info-text transition-opacity hover:opacity-90"
                   >
-                    <Plus className="h-3 w-3" /> {t('reception.addDoctor')}
+                    <CreditCard className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      {suggested.info.canJoin
+                        ? t('reception.cardFoundJoin')
+                            .replace('{name}', suggested.info.holderName ?? '')
+                            .replace('{pct}', String(suggested.info.discountPct ?? 0))
+                        : t('reception.cardFoundBlocked')
+                            .replace('{name}', suggested.info.holderName ?? '')}
+                    </span>
                   </button>
                 )}
-              </div>
-              {addingDoctor ? (
-                <div className="space-y-2 rounded-xl border border-dashed border-brand-300/60 bg-brand-500/5 p-3">
-                  <input
-                    className="field"
-                    autoFocus
-                    value={docName}
-                    onChange={(e) => setDocName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveDoctor(); } }}
-                    placeholder={t('reception.doctorName')}
-                  />
-                  <input
-                    className="field"
-                    value={docClinic}
-                    onChange={(e) => setDocClinic(e.target.value)}
-                    placeholder={t('reception.doctorClinic')}
-                  />
-                  {docError && <p className="text-sm text-danger-text"><Tr text={docError} /></p>}
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={saveDoctor} loading={docSaving} disabled={docName.trim().length < 2}>
-                      {t('reception.addDoctorSave')}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setAddingDoctor(false)}>{t('common.cancel')}</Button>
+
+                {ownCard ? (
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-ok-line bg-ok-soft px-3.5 py-2.5 text-sm text-ok-text">
+                    <CreditCard className="h-4 w-4 shrink-0" />
+                    <span className="font-semibold">{ownCard.discountPct}% {t('reception.cardApplied')}</span>
+                    <span className="font-mono text-xs opacity-75">{ownCard.mobile}</span>
                   </div>
-                </div>
-              ) : (
-                <Select
-                  value={doctorId}
-                  onChange={setDoctorId}
-                  placeholder={t('common.none')}
-                  options={[{ value: '', label: t('common.none') }, ...doctors.map((d) => ({ value: d.id, label: d.name }))]}
-                />
-              )}
-            </div>
-
-            {/*
-              Two questions, asked in order. First: is there a discount at all?
-              Most slips have none, so that is a switch which is off, and the
-              whole apparatus stays folded away behind it. Only then: on what
-              basis — a family card the patient holds, or someone's authority.
-
-              There is deliberately no free-typed amount any more. A number
-              bounded only by the bill, recorded against nobody, was the one
-              discount nobody could answer for afterwards.
-            */}
-            <div className="mt-4">
-              <span className="label">{t('reception.discount')}</span>
-
-              {ownCard ? null : (
-                <Checkbox
-                  checked={discountOn}
-                  onChange={setDiscountOn}
-                  label={t('reception.discountApply')}
-                  hint={t('reception.discountApplyHint')}
-                />
-              )}
-
-              {/* Found a card on a related number: offer it, do not make reception
-                  go looking for something they have no reason to suspect exists.
-                  Shown whether or not the discount switch is on — a switch that
-                  is off is exactly when nobody would think to look — and taking
-                  the offer turns the switch on. */}
-              {!ownCard && suggested?.info.found && !(discountOn && discountSource === 'CARD') && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDiscountOn(true);
-                    setDiscountSource('CARD');
-                    setCardMode('JOIN');
-                    setJoinMobile(suggested.mobile);
-                  }}
-                  className="mt-2.5 flex w-full items-center gap-2 rounded-xl border border-info-line bg-info-soft px-3.5 py-2.5 text-start text-sm text-info-text transition-opacity hover:opacity-90"
-                >
-                  <CreditCard className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    {suggested.info.canJoin
-                      ? t('reception.cardFoundJoin')
-                          .replace('{name}', suggested.info.holderName ?? '')
-                          .replace('{pct}', String(suggested.info.discountPct ?? 0))
-                      : t('reception.cardFoundBlocked')
-                          .replace('{name}', suggested.info.holderName ?? '')}
-                  </span>
-                </button>
-              )}
-
-              {ownCard ? (
-                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-ok-line bg-ok-soft px-3.5 py-2.5 text-sm text-ok-text">
-                  <CreditCard className="h-4 w-4 shrink-0" />
-                  <span className="font-semibold">{ownCard.discountPct}% {t('reception.cardApplied')}</span>
-                  <span className="font-mono text-xs opacity-75">{ownCard.mobile}</span>
-                </div>
-              ) : discountOn ? (
-                <div className="mt-2.5">
-                  <Segmented
-                    value={discountSource}
-                    onChange={setDiscountSource}
-                    ariaLabel={t('reception.discount')}
-                    options={[
-                      {
-                        value: 'CARD',
-                        label: t('familyCard.title'),
-                        icon: <CreditCard className="h-4 w-4 shrink-0" />,
-                        // A card is attached to a person: without one chosen there
-                        // is nothing to look up, prefill, or join. Offering the
-                        // option anyway only produces a failure two clicks later.
-                        disabled: !selected,
-                        title: !selected ? t('reception.cardNeedsPatient') : undefined,
-                      },
-                      {
-                        value: 'MANUAL',
-                        label: t('reception.discManual'),
-                        icon: <BadgePercent className="h-4 w-4 shrink-0" />,
-                      },
-                    ]}
-                  />
-
-                  {discountSource === 'MANUAL' && (
-                    <div className="mt-3 space-y-2">
-                      <div className="flex items-stretch gap-2">
-                        <div className="w-28 shrink-0">
-                          <Segmented
-                            value={manualType}
-                            onChange={setManualType}
-                            ariaLabel={t('reception.manualType')}
-                            options={[
-                              { value: 'FIXED', label: 'Rs' },
-                              { value: 'PERCENT', label: '%' },
-                            ]}
-                          />
-                        </div>
-                        <div className="field flex min-w-0 flex-1 items-center gap-2 py-0 pe-3.5 focus-within:border-brand-500 focus-within:bg-surface">
-                          <input
-                            type="number"
-                            min={0}
-                            max={manualType === 'PERCENT' ? 100 : undefined}
-                            inputMode="decimal"
-                            value={manualValue}
-                            placeholder="0"
-                            aria-label={t('reception.manualAmount')}
-                            onChange={(e) => setManualValue(e.target.value)}
-                            className="field-inner py-2.5 text-base font-semibold tabular-nums"
-                          />
-                          <span className="shrink-0 text-sm font-bold text-subtle">{manualType === 'PERCENT' ? '%' : 'Rs'}</span>
-                        </div>
-                      </div>
-                      {manualType === 'PERCENT' && manualNum > 100 ? (
-                        <p className="text-sm text-warn-text">{t('reception.manualPctMax')}</p>
-                      ) : manualType === 'FIXED' && total > 0 && manualNum > total ? (
-                        <p className="text-sm text-warn-text">{t('reception.manualCapped').replace('{amount}', formatPkr(total))}</p>
-                      ) : (
-                        <p className="text-xs text-muted">{t('reception.manualHint')}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {discountSource === 'CARD' && (
-                    <div className="mt-3 space-y-2.5">
-                      <Segmented
-                        size="sm"
-                        value={cardMode}
-                        onChange={setCardMode}
-                        ariaLabel={t('familyCard.title')}
-                        options={[
-                          { value: 'JOIN', label: t('reception.cardJoin'), icon: <Users className="h-3.5 w-3.5 shrink-0" /> },
-                          { value: 'CREATE', label: t('reception.cardCreate'), icon: <CreditCard className="h-3.5 w-3.5 shrink-0" /> },
-                        ]}
-                      />
-
-                      {cardMode === 'JOIN' && (
-                        <div>
-                          <input
-                            className="field"
-                            inputMode="tel"
-                            placeholder={t('reception.cardJoinPlaceholder')}
-                            value={joinMobile}
-                            onChange={(e) => setJoinMobile(e.target.value)}
-                          />
-                          {joinInfo && (
-                            joinInfo.found && joinInfo.canJoin ? (
-                              <>
-                                <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm text-ok-text">
-                                  <Check className="h-4 w-4" />
-                                  <span className="font-semibold">{joinInfo.holderName}</span>
-                                  <span>· {joinInfo.discountPct}%</span>
-                                  <span className="text-subtle">
-                                    · {joinInfo.used}/{joinInfo.cap} {t('familyCard.slotsUsed')}
-                                  </span>
-                                </p>
-                                {/* Who they are to the holder is what justifies the
-                                    discount, so it is asked at the moment of joining
-                                    rather than left blank forever. */}
-                                <div className="mt-2">
-                                  <span className="label">
-                                    {t('reception.relationTo').replace('{name}', joinInfo.holderName ?? '')}
-                                  </span>
-                                  <Select
-                                    value={joinRelation}
-                                    onChange={(v) => setJoinRelation(v as Relation)}
-                                    options={MEMBER_RELATIONS.map((r) => ({
-                                      value: r,
-                                      label: t(`relation.${r}`),
-                                    }))}
-                                  />
-                                </div>
-                              </>
-                            ) : (
-                              <p className="mt-1.5 text-sm text-danger-text">
-                                {joinInfo.reason ?? t('reception.cardNotFound')}
-                              </p>
-                            )
-                          )}
-                        </div>
-                      )}
-
-                      {cardMode === 'CREATE' && (
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-muted">
-                            {t('reception.cardOnNumber')}
-                          </label>
-                          <input
-                            className="field"
-                            inputMode="tel"
-                            placeholder="03001234567"
-                            value={newCardMobile}
-                            onChange={(e) => setNewCardMobile(e.target.value)}
-                          />
-                          {newCardClash ? (
-                            <p className="mt-1.5 text-sm text-danger-text">
-                              {t('reception.cardNumberTaken').replace('{name}', newCardClash.holderName ?? '')}
-                            </p>
-                          ) : (
-                            <p className="mt-1.5 text-sm text-muted">
-                              {t('reception.cardCreateNote')
-                                .replace('{fee}', formatPkr(cardPolicy.fee))
-                                .replace('{pct}', String(cardPolicy.discountPct))}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          </Card>
-
-          <Card className="p-5">
-            <div className="space-y-1.5 rounded-xl bg-surface-2 p-4 text-sm">
-              <div className="flex justify-between text-muted"><span>{t('reception.total')}</span><span>{formatPkr(total)}</span></div>
-              <div className="flex justify-between gap-2 text-muted">
-                {/* The summary names the basis, not just the amount: "care of
-                    Imran (10%)" is what makes the line answerable later. */}
-                <span className="min-w-0 truncate">
-                  {cardApplies
-                    ? `${t('familyCard.title')} (${effectivePct}%)`
-                    : manualAmount > 0
-                      ? `${t('reception.discManual')}${manualType === 'PERCENT' ? ` (${Math.min(manualNum, 100)}%)` : ''}`
-                      : t('reception.discount')}
-                </span>
-                <span className="whitespace-nowrap">− {formatPkr(discountAmount)}</span>
-              </div>
-              {feeCharged > 0 && (
-                <div className="flex justify-between text-muted">
-                  <span>{t('reception.cardFee')}</span>
-                  <span className="whitespace-nowrap">+ {formatPkr(feeCharged)}</span>
-                </div>
-              )}
-              <div className="flex justify-between gap-2 border-t border-line pt-2 text-lg font-extrabold text-strong">
-                <span>{t('reception.net')}</span>
-                <span className="whitespace-nowrap text-brand-600 dark:text-brand-300">{formatPkr(net)}</span>
-              </div>
-            </div>
-
-            {billedToPartner && partner && (
-              <p className="mt-4 rounded-xl bg-info-soft px-3.5 py-2.5 text-sm font-medium text-info-text">
-                {t('reception.billedToPartner').replace('{name}', partner.name)}
-              </p>
-            )}
-
-            {net > 0 && !billedToPartner && (
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="label mb-0">{t('pay.title')}</span>
-                  <div className="w-44">
+                ) : discountOn ? (
+                  <div className="mt-2.5">
+                    {f['booking.familyCards'] && f['booking.manualDiscount'] && (
                     <Segmented
-                      size="sm"
-                      value={payNow}
-                      onChange={setPayNow}
+                      value={discountSource}
+                      onChange={setDiscountSource}
+                      ariaLabel={t('reception.discount')}
                       options={[
-                        { value: 'NOW', label: t('pay.now') },
-                        { value: 'LATER', label: t('pay.later') },
+                        {
+                          value: 'CARD',
+                          label: t('familyCard.title'),
+                          icon: <CreditCard className="h-4 w-4 shrink-0" />,
+                          // A card is attached to a person: without one chosen there
+                          // is nothing to look up, prefill, or join. Offering the
+                          // option anyway only produces a failure two clicks later.
+                          disabled: !selected,
+                          title: !selected ? t('reception.cardNeedsPatient') : undefined,
+                        },
+                        {
+                          value: 'MANUAL',
+                          label: t('reception.discManual'),
+                          icon: <BadgePercent className="h-4 w-4 shrink-0" />,
+                        },
                       ]}
                     />
-                  </div>
-                </div>
+                    )}
 
-                {payNow === 'NOW' && (
-                  <>
-                    <div>
-                      <span className="label">{t('reception.account')}</span>
-                      {accounts.length > 0 && accounts.length <= 4 ? (
-                        <Segmented
-                          value={accountId}
-                          onChange={setAccountId}
-                          ariaLabel={t('reception.account')}
-                          options={accounts.map((a) => ({ value: a.id, label: a.name }))}
-                        />
-                      ) : (
-                        <Select value={accountId} onChange={setAccountId} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
-                      )}
-                    </div>
-                    <div>
-                      <label className="label" htmlFor="pay-received">{t('pay.received')}</label>
-                      <div className="field flex items-center gap-2 py-0 ps-3.5 focus-within:border-brand-500 focus-within:bg-surface">
-                        <span className="shrink-0 text-sm font-bold text-subtle">Rs</span>
-                        <input
-                          id="pay-received"
-                          type="number"
-                          min={0}
-                          inputMode="decimal"
-                          value={receivedTouched ? received : String(net)}
-                          onChange={(e) => { setReceivedTouched(true); setReceived(e.target.value); }}
-                          className="field-inner py-2.5 text-base font-semibold tabular-nums"
-                        />
+                    {discountSource === 'MANUAL' && (
+                      <div className="mt-3 space-y-2">
+                        <div className="flex items-stretch gap-2">
+                          <div className="w-28 shrink-0">
+                            <Segmented
+                              value={manualType}
+                              onChange={setManualType}
+                              ariaLabel={t('reception.manualType')}
+                              options={[
+                                { value: 'FIXED', label: 'Rs' },
+                                { value: 'PERCENT', label: '%' },
+                              ]}
+                            />
+                          </div>
+                          <div className="field flex min-w-0 flex-1 items-center gap-2 py-0 pe-3.5 focus-within:border-brand-500 focus-within:bg-surface">
+                            <input
+                              type="number"
+                              min={0}
+                              max={manualType === 'PERCENT' ? 100 : undefined}
+                              inputMode="decimal"
+                              value={manualValue}
+                              placeholder="0"
+                              aria-label={t('reception.manualAmount')}
+                              onChange={(e) => setManualValue(e.target.value)}
+                              className="field-inner py-2.5 text-base font-semibold tabular-nums"
+                            />
+                            <span className="shrink-0 text-sm font-bold text-subtle">{manualType === 'PERCENT' ? '%' : 'Rs'}</span>
+                          </div>
+                        </div>
+                        {manualType === 'PERCENT' && manualNum > 100 ? (
+                          <p className="text-sm text-warn-text">{t('reception.manualPctMax')}</p>
+                        ) : manualType === 'FIXED' && total > 0 && manualNum > total ? (
+                          <p className="text-sm text-warn-text">{t('reception.manualCapped').replace('{amount}', formatPkr(total))}</p>
+                        ) : (
+                          <p className="text-xs text-muted">{t('reception.manualHint')}</p>
+                        )}
                       </div>
-                      {/* The sum the cashier would otherwise do in their head. */}
-                      {changeDue > 0 && (
-                        <p className="mt-1.5 rounded-lg bg-ok-soft px-3 py-2 text-sm font-semibold text-ok-text">
-                          {t('pay.change').replace('{amount}', formatPkr(changeDue))}
-                        </p>
-                      )}
-                      {stillDue > 0 && (
-                        <p className="mt-1.5 text-sm text-warn-text">
-                          {t('pay.remaining').replace('{amount}', formatPkr(stillDue))}
-                        </p>
-                      )}
-                    </div>
-                  </>
+                    )}
+
+                    {discountSource === 'CARD' && (
+                      <div className="mt-3 space-y-2.5">
+                        <Segmented
+                          size="sm"
+                          value={cardMode}
+                          onChange={setCardMode}
+                          ariaLabel={t('familyCard.title')}
+                          options={[
+                            { value: 'JOIN', label: t('reception.cardJoin'), icon: <Users className="h-3.5 w-3.5 shrink-0" /> },
+                            { value: 'CREATE', label: t('reception.cardCreate'), icon: <CreditCard className="h-3.5 w-3.5 shrink-0" /> },
+                          ]}
+                        />
+
+                        {cardMode === 'JOIN' && (
+                          <div>
+                            <input
+                              className="field"
+                              inputMode="tel"
+                              placeholder={t('reception.cardJoinPlaceholder')}
+                              value={joinMobile}
+                              onChange={(e) => setJoinMobile(e.target.value)}
+                            />
+                            {joinInfo && (
+                              joinInfo.found && joinInfo.canJoin ? (
+                                <>
+                                  <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm text-ok-text">
+                                    <Check className="h-4 w-4" />
+                                    <span className="font-semibold">{joinInfo.holderName}</span>
+                                    <span>· {joinInfo.discountPct}%</span>
+                                    <span className="text-subtle">
+                                      · {joinInfo.used}/{joinInfo.cap} {t('familyCard.slotsUsed')}
+                                    </span>
+                                  </p>
+                                  {/* Who they are to the holder is what justifies the
+                                      discount, so it is asked at the moment of joining
+                                      rather than left blank forever. */}
+                                  <div className="mt-2">
+                                    <span className="label">
+                                      {t('reception.relationTo').replace('{name}', joinInfo.holderName ?? '')}
+                                    </span>
+                                    <Select
+                                      value={joinRelation}
+                                      onChange={(v) => setJoinRelation(v as Relation)}
+                                      options={MEMBER_RELATIONS.map((r) => ({
+                                        value: r,
+                                        label: t(`relation.${r}`),
+                                      }))}
+                                    />
+                                  </div>
+                                </>
+                              ) : (
+                                <p className="mt-1.5 text-sm text-danger-text">
+                                  {joinInfo.reason ?? t('reception.cardNotFound')}
+                                </p>
+                              )
+                            )}
+                          </div>
+                        )}
+
+                        {cardMode === 'CREATE' && (
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-muted">
+                              {t('reception.cardOnNumber')}
+                            </label>
+                            <input
+                              className="field"
+                              inputMode="tel"
+                              placeholder="03001234567"
+                              value={newCardMobile}
+                              onChange={(e) => setNewCardMobile(e.target.value)}
+                            />
+                            {newCardClash ? (
+                              <p className="mt-1.5 text-sm text-danger-text">
+                                {t('reception.cardNumberTaken').replace('{name}', newCardClash.holderName ?? '')}
+                              </p>
+                            ) : (
+                              <p className="mt-1.5 text-sm text-muted">
+                                {t('reception.cardCreateNote')
+                                  .replace('{fee}', formatPkr(cardPolicy.fee))
+                                  .replace('{pct}', String(cardPolicy.discountPct))}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>)}
+            </Card>
+
+            <Card className="p-5">
+              <div className="space-y-1.5 rounded-xl bg-surface-2 p-4 text-sm">
+                <div className="flex justify-between text-muted"><span>{t('reception.total')}</span><span>{formatPkr(total)}</span></div>
+                <div className="flex justify-between gap-2 text-muted">
+                  {/* The summary names the basis, not just the amount: "care of
+                      Imran (10%)" is what makes the line answerable later. */}
+                  <span className="min-w-0 truncate">
+                    {cardApplies
+                      ? `${t('familyCard.title')} (${effectivePct}%)`
+                      : manualAmount > 0
+                        ? `${t('reception.discManual')}${manualType === 'PERCENT' ? ` (${Math.min(manualNum, 100)}%)` : ''}`
+                        : t('reception.discount')}
+                  </span>
+                  <span className="whitespace-nowrap">− {formatPkr(discountAmount)}</span>
+                </div>
+                {feeCharged > 0 && (
+                  <div className="flex justify-between text-muted">
+                    <span>{t('reception.cardFee')}</span>
+                    <span className="whitespace-nowrap">+ {formatPkr(feeCharged)}</span>
+                  </div>
                 )}
+                <div className="flex justify-between gap-2 border-t border-line pt-2 text-lg font-extrabold text-strong">
+                  <span>{t('reception.net')}</span>
+                  <span className="whitespace-nowrap text-brand-600 dark:text-brand-300">{formatPkr(net)}</span>
+                </div>
               </div>
-            )}
 
-            {error && <p className="mt-3 animate-fade-in rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
+              {billedToPartner && partner && (
+                <p className="mt-4 rounded-xl bg-info-soft px-3.5 py-2.5 text-sm font-medium text-info-text">
+                  {t('reception.billedToPartner').replace('{name}', partner.name)}
+                </p>
+              )}
 
-            <Button size="lg" className="mt-4 w-full" onClick={book} loading={isPending} disabled={!selected || cartEmpty} title="Ctrl+Enter">
+              {f['booking.payAtCounter'] && net > 0 && !billedToPartner && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="label mb-0">{t('pay.title')}</span>
+                    <div className="w-44">
+                      <Segmented
+                        size="sm"
+                        value={payNow}
+                        onChange={setPayNow}
+                        options={[
+                          { value: 'NOW', label: t('pay.now') },
+                          { value: 'LATER', label: t('pay.later') },
+                        ]}
+                      />
+                    </div>
+                  </div>
+
+                  {payNow === 'NOW' && (
+                    <>
+                      <div>
+                        <span className="label">{t('reception.account')}</span>
+                        {accounts.length > 0 && accounts.length <= 4 ? (
+                          <Segmented
+                            value={accountId}
+                            onChange={setAccountId}
+                            ariaLabel={t('reception.account')}
+                            options={accounts.map((a) => ({ value: a.id, label: a.name }))}
+                          />
+                        ) : (
+                          <Select value={accountId} onChange={setAccountId} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
+                        )}
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="pay-received">{t('pay.received')}</label>
+                        <div className="field flex items-center gap-2 py-0 ps-3.5 focus-within:border-brand-500 focus-within:bg-surface">
+                          <span className="shrink-0 text-sm font-bold text-subtle">Rs</span>
+                          <input
+                            id="pay-received"
+                            type="number"
+                            min={0}
+                            inputMode="decimal"
+                            value={receivedTouched ? received : String(net)}
+                            onChange={(e) => { setReceivedTouched(true); setReceived(e.target.value); }}
+                            className="field-inner py-2.5 text-base font-semibold tabular-nums"
+                          />
+                        </div>
+                        {/* The sum the cashier would otherwise do in their head. */}
+                        {changeDue > 0 && (
+                          <p className="mt-1.5 rounded-lg bg-ok-soft px-3 py-2 text-sm font-semibold text-ok-text">
+                            {t('pay.change').replace('{amount}', formatPkr(changeDue))}
+                          </p>
+                        )}
+                        {stillDue > 0 && (
+                          <p className="mt-1.5 text-sm text-warn-text">
+                            {t('pay.remaining').replace('{amount}', formatPkr(stillDue))}
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </Card>
+          </>
+        )}
+
+        {error && <p className="animate-fade-in rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
+
+        {/* Always in reach: who and how much, and the way forward. */}
+        <div className="sticky bottom-20 z-10 flex items-center gap-2 rounded-2xl border border-line bg-surface/95 p-2.5 shadow-card backdrop-blur-md md:bottom-4 sm:gap-3 sm:p-3">
+          <div className="min-w-0 flex-1 ps-1 text-sm">
+            <div className="truncate font-semibold text-strong">{selected?.fullName ?? t('book.noPatientYet')}</div>
+            <div className="truncate text-xs text-muted">
+              {cartEmpty ? t('reception.noTests') : `${(testCount === 1 ? t('book.oneTest') : t('book.nTests').replace('{n}', String(testCount)))} · ${formatPkr(net)}`}
+            </div>
+          </div>
+          {step > 0 && (
+            <Button variant="ghost" onClick={() => setStep(step - 1)}>
+              <ArrowLeft className="h-4 w-4 rtl:rotate-180" /> <span className="hidden sm:inline">{t('book.back')}</span>
+            </Button>
+          )}
+          {step < 3 ? (
+            <Button onClick={() => setStep(step + 1)} disabled={!canReach(step + 1)}>
+              {t('book.next')} <ArrowRight className="h-4 w-4 rtl:rotate-180" />
+            </Button>
+          ) : (
+            <Button onClick={book} loading={isPending} disabled={!selected || cartEmpty} title="Ctrl+Enter">
               <Icon name="print" className="h-4 w-4" /> {t('reception.save')}
             </Button>
-          </Card>
+          )}
         </div>
+        {step < 3 && !canReach(step + 1) && (
+          <p className="text-center text-xs text-subtle">{step === 0 ? t('book.needPatient') : t('book.needTests')}</p>
+        )}
       </div>
     </div>
   );

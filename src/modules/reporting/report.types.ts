@@ -1,3 +1,4 @@
+import type { ReportLayout } from './layout';
 // Shared, serializable report shape (no server imports — safe for client use).
 
 export interface ReportParam {
@@ -78,4 +79,8 @@ export interface ReportData {
   tests: ReportTest[];
   /** Whether any test on the report has an earlier result to show. */
   hasHistory: boolean;
+  /** The lab's choice: open reports with earlier results already shown. */
+  historyByDefault: boolean;
+  /** How the lab lays out a printed report. */
+  layout: ReportLayout;
 }

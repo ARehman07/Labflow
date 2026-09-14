@@ -72,10 +72,11 @@ export const pricingService = {
       isActive: r.isActive,
       priceCount: r._count.prices,
       usedBy: r._count.partnerLabs + r._count.collectionPoints,
+      atCounter: r.atCounter,
     }));
   },
 
-  async saveRateGroup(id: string | null, input: { name: string; defaultDiscountPct: number }) {
+  async saveRateGroup(id: string | null, input: { name: string; defaultDiscountPct: number; atCounter?: boolean }) {
     const db = await tenantDb();
     const clash = await db.rateGroup.findFirst({ where: { name: input.name, ...(id ? { id: { not: id } } : {}) }, select: { id: true } });
     if (clash) throw new PricingError(`A rate group named "${input.name}" already exists.`);
@@ -89,6 +90,10 @@ export const pricingService = {
 
   async setRateGroupActive(id: string, isActive: boolean) {
     await (await tenantDb()).rateGroup.update({ where: { id }, data: { isActive } });
+  },
+
+  async setRateGroupCounter(id: string, atCounter: boolean) {
+    await (await tenantDb()).rateGroup.update({ where: { id }, data: { atCounter } });
   },
 
   /** Every active test, its standard price here, and this group's price if set. */

@@ -6,6 +6,8 @@ import { Topbar } from '@/components/layout/Topbar';
 import { GlobalShortcuts } from '@/components/layout/GlobalShortcuts';
 import { NavProgress } from '@/components/layout/NavProgress';
 import { MobileNav } from '@/components/layout/MobileNav';
+import { FeaturesProvider } from '@/core/features/FeaturesProvider';
+import { getFeatures } from '@/core/features/features.server';
 
 export default async function StaffLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -20,8 +22,10 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   if (session.user.doctorId) redirect('/doctor');
 
   const { name, role, branchName, permissions } = session.user;
+  const features = await getFeatures();
 
   return (
+    <FeaturesProvider features={features}>
     <div className="min-h-screen">
       <NavProgress />
       <Topbar userName={name ?? 'User'} role={role} branchName={branchName} canSearch={(permissions ?? []).includes('visit.create')} />
@@ -35,5 +39,6 @@ export default async function StaffLayout({ children }: { children: React.ReactN
       </div>
       <MobileNav permissions={permissions ?? []} userName={name ?? 'User'} role={role} />
     </div>
+    </FeaturesProvider>
   );
 }

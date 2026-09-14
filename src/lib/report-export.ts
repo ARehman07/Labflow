@@ -9,7 +9,20 @@
  * The capture always uses the light theme — a report is paper, and a dark-mode
  * screen would otherwise export white text on black.
  */
-export async function exportReport(el: HTMLElement, fileBase: string, kind: 'pdf' | 'png'): Promise<void> {
+/** The report as a PDF, base64-encoded, for sending by email. */
+export async function reportPdfBase64(el: HTMLElement): Promise<string> {
+  let out = '';
+  await exportReport(el, 'report', 'pdf', (pdf) => { out = pdf.output('datauristring').split(',')[1] ?? ''; });
+  return out;
+}
+
+export async function exportReport(
+  el: HTMLElement,
+  fileBase: string,
+  kind: 'pdf' | 'png',
+  /** Take the finished PDF instead of downloading it. */
+  onPdf?: (pdf: import('jspdf').jsPDF) => void,
+): Promise<void> {
   const root = document.documentElement;
   const wasDark = root.classList.contains('dark');
   const theme = root.getAttribute('data-theme');
@@ -48,7 +61,7 @@ export async function exportReport(el: HTMLElement, fileBase: string, kind: 'pdf
       if (page > 0) pdf.addPage();
       pdf.addImage(slice.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, imgW, h / pxPerMm);
     }
-    pdf.save(`${fileBase}.pdf`);
+    if (onPdf) onPdf(pdf); else pdf.save(`${fileBase}.pdf`);
   } finally {
     if (wasDark) root.classList.add('dark');
     if (theme == null) root.removeAttribute('data-theme'); else root.setAttribute('data-theme', theme);

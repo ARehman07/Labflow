@@ -22,6 +22,8 @@ export const settingsService = {
         name: true, code: true,
         familyCardDiscountPct: true, familyCardMemberCap: true, familyCardFee: true,
         familyCardDiscountOnIssue: true, allowSelfVerify: true,
+        resultEditLockMins: true, refundWindowHours: true,
+        reportHistoryColumns: true, reportHistoryByDefault: true,
       },
     });
     return {
@@ -32,6 +34,10 @@ export const settingsService = {
       familyCardFee: Number(t.familyCardFee),
       familyCardDiscountOnIssue: t.familyCardDiscountOnIssue,
       allowSelfVerify: t.allowSelfVerify,
+      resultEditLockMins: t.resultEditLockMins,
+      refundWindowHours: t.refundWindowHours,
+      reportHistoryColumns: t.reportHistoryColumns,
+      reportHistoryByDefault: t.reportHistoryByDefault,
     };
   },
 
@@ -73,6 +79,8 @@ export const letterheadService = {
       select: {
         name: true, code: true, tagline: true, licenseNo: true, email: true,
         logoDataUrl: true, reportFooterNote: true,
+        reportShowHeader: true, reportShowFooter: true, reportTopMarginMm: true,
+        reportBottomMarginMm: true, reportFont: true, reportFontScale: true,
       },
     });
     // The address on a report is the branch's, so show which one it will use.
@@ -89,6 +97,12 @@ export const letterheadService = {
       email: t.email ?? undefined,
       logoDataUrl: t.logoDataUrl ?? undefined,
       reportFooterNote: t.reportFooterNote ?? undefined,
+      reportShowHeader: t.reportShowHeader,
+      reportShowFooter: t.reportShowFooter,
+      reportTopMarginMm: t.reportTopMarginMm,
+      reportBottomMarginMm: t.reportBottomMarginMm,
+      reportFont: t.reportFont as LetterheadInput['reportFont'],
+      reportFontScale: t.reportFontScale,
       branchName: branch?.name ?? null,
       branchAddress: branch?.address ?? null,
       branchPhone: branch?.phone ?? null,
@@ -108,6 +122,12 @@ export const letterheadService = {
           email: input.email ?? null,
           logoDataUrl: input.logoDataUrl ?? null,
           reportFooterNote: input.reportFooterNote ?? null,
+          reportShowHeader: input.reportShowHeader,
+          reportShowFooter: input.reportShowFooter,
+          reportTopMarginMm: input.reportTopMarginMm,
+          reportBottomMarginMm: input.reportBottomMarginMm,
+          reportFont: input.reportFont,
+          reportFontScale: input.reportFontScale,
         },
       });
       await tx.auditLog.create({

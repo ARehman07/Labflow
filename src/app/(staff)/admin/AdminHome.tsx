@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
+import { useFeatures } from '@/core/features/FeaturesProvider';import Link from 'next/link';
 import {
-  FlaskConical, KeyRound, Layers, MapPin, MapPinned, Package, Pill, Scale, ShieldCheck, Stamp, Stethoscope, Tags, Users, Wallet, type LucideIcon,
+  Cpu, FileText, FlaskConical, KeyRound, ToggleRight, Layers, MessageSquareText, Plug, MapPin, MapPinned, Package, Pill, Scale, ShieldCheck, Stamp, Stethoscope, Tags, Users, Wallet, type LucideIcon,
 } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -18,6 +18,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
  */
 export function AdminHome({ manage, users, settings }: { manage: boolean; users: boolean; settings: boolean }) {
   const { t } = useI18n();
+  const f = useFeatures();
 
   return (
     <div className="page">
@@ -25,8 +26,10 @@ export function AdminHome({ manage, users, settings }: { manage: boolean; users:
 
       {settings && (
         <Group title={t('admin.groupPolicy')}>
+          <Tile href="/admin/features" icon={ToggleRight} titleKey="admin.features" descKey="admin.featuresDesc" />
           <Tile href="/admin/policy" icon={Scale} titleKey="admin.policy" descKey="admin.policyDesc" />
           <Tile href="/admin/letterhead" icon={Stamp} titleKey="admin.letterhead" descKey="admin.letterheadDesc" />
+          <Tile href="/admin/messages" icon={MessageSquareText} titleKey="admin.messages" descKey="admin.messagesDesc" />
         </Group>
       )}
 
@@ -43,10 +46,13 @@ export function AdminHome({ manage, users, settings }: { manage: boolean; users:
       {manage && (
         <Group title={t('admin.groupCatalogue')}>
           <Tile href="/admin/tests" icon={FlaskConical} titleKey="admin.tests" descKey="admin.testsDesc" />
-          <Tile href="/admin/packages" icon={Package} titleKey="admin.packages" descKey="admin.packagesDesc" />
+          {f['booking.packages'] && <Tile href="/admin/packages" icon={Package} titleKey="admin.packages" descKey="admin.packagesDesc" />}
           <Tile href="/admin/antibiotics" icon={Pill} titleKey="admin.antibiotics" descKey="admin.antibioticsDesc" />
+          {f['patients.documents'] && <Tile href="/admin/document-templates" icon={FileText} titleKey="admin.docTemplates" descKey="admin.docTemplatesDesc" />}
+          {f['lab.analyzers'] && <Tile href="/admin/analyzers" icon={Cpu} titleKey="admin.analyzers" descKey="admin.analyzersDesc" />}
+          <Tile href="/admin/integrations" icon={Plug} titleKey="admin.integrations" descKey="admin.integrationsDesc" />
           <Tile href="/admin/rate-groups" icon={Tags} titleKey="admin.rateGroups" descKey="admin.rateGroupsDesc" />
-          <Tile href="/admin/collection-points" icon={MapPinned} titleKey="admin.collectionPoints" descKey="admin.collectionPointsDesc" />
+          {f['booking.collectionPoints'] && <Tile href="/admin/collection-points" icon={MapPinned} titleKey="admin.collectionPoints" descKey="admin.collectionPointsDesc" />}
           <Tile href="/admin/departments" icon={Layers} titleKey="admin.departments" descKey="admin.departmentsDesc" />
           <Tile href="/admin/branches" icon={MapPin} titleKey="admin.branches" descKey="admin.branchesDesc" />
         </Group>

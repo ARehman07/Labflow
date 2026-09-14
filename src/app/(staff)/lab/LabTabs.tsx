@@ -1,16 +1,19 @@
 'use client';
 
-import Link from 'next/link';
+import { useFeatures } from '@/core/features/FeaturesProvider';
+import type { FeatureKey } from '@/core/features/catalog';import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { AlertTriangle, BellRing, FlaskConical, ShieldCheck, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, BellRing, FlaskConical, ShieldCheck, type LucideIcon, Boxes, ShieldCheck as ShieldCheckIcon } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 
-const TABS: { href: string; key: string; icon: LucideIcon; needs: string[] }[] = [
+const TABS: { href: string; key: string; icon: LucideIcon; needs: string[]; feature?: FeatureKey }[] = [
   { href: '/lab', key: 'nav.lab', icon: FlaskConical, needs: ['sample.collect', 'result.enter', 'result.approve', 'workflow.advance'] },
   { href: '/lab/approvals', key: 'lab.approvals', icon: ShieldCheck, needs: ['result.approve'] },
-  { href: '/lab/critical', key: 'nav.critical', icon: AlertTriangle, needs: ['critical.manage'] },
-  { href: '/lab/notifiable', key: 'nav.notifiable', icon: BellRing, needs: ['notifiable.manage'] },
+  { href: '/lab/critical', key: 'nav.critical', icon: AlertTriangle, needs: ['critical.manage'], feature: 'lab.critical' },
+  { href: '/lab/notifiable', key: 'nav.notifiable', icon: BellRing, needs: ['notifiable.manage'], feature: 'lab.notifiable' },
+  { href: '/lab/qc', key: 'nav.qc', icon: ShieldCheckIcon, needs: ['qc.manage', 'result.enter', 'result.approve'], feature: 'lab.qc' },
+  { href: '/lab/stock', key: 'nav.stock', icon: Boxes, needs: ['stock.manage'], feature: 'lab.stock' },
 ];
 
 /**
@@ -24,7 +27,8 @@ const TABS: { href: string; key: string; icon: LucideIcon; needs: string[] }[] =
 export function LabTabs({ permissions }: { permissions: string[] }) {
   const { t } = useI18n();
   const pathname = usePathname();
-  const tabs = TABS.filter((tab) => tab.needs.some((p) => permissions.includes(p)));
+  const features = useFeatures();
+  const tabs = TABS.filter((tab) => (!tab.feature || features[tab.feature]) && tab.needs.some((p) => permissions.includes(p)));
   if (tabs.length < 2) return null;
 
   return (

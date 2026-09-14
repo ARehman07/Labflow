@@ -2,6 +2,9 @@
 
 import { useRef, useState, useTransition } from 'react';
 import { Upload, Trash2, Info } from 'lucide-react';
+import { Select } from '@/components/ui/Select';
+import { cn } from '@/lib/utils';
+import { FONT_SCALES, REPORT_FONTS, fontStack } from '@/modules/reporting/layout';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SectionHeading, ACCENT } from '@/components/ui/List';
@@ -62,6 +65,12 @@ export function LetterheadClient({ initial }: { initial: LabLetterhead }) {
         email: v.email ?? '',
         logoDataUrl: v.logoDataUrl ?? '',
         reportFooterNote: v.reportFooterNote ?? '',
+        reportShowHeader: v.reportShowHeader,
+        reportShowFooter: v.reportShowFooter,
+        reportTopMarginMm: v.reportTopMarginMm,
+        reportBottomMarginMm: v.reportBottomMarginMm,
+        reportFont: v.reportFont,
+        reportFontScale: v.reportFontScale,
       });
       if (res.ok) { setV(res.letterhead); setSaved(res.letterhead); toast('success', t('lh.updated')); }
       else { setError(res.error); toast('error', res.error); }
@@ -77,8 +86,10 @@ export function LetterheadClient({ initial }: { initial: LabLetterhead }) {
       />
 
       {/* Preview first — this is the thing being edited. */}
-      <Card className="p-6">
+      <Card className="p-6" style={{ fontFamily: fontStack(v.reportFont) }}>
         <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-subtle">{t('lh.preview')}</div>
+        {!v.reportShowHeader && <p className="mb-3 rounded-lg border border-dashed border-line px-3 py-6 text-center text-xs text-subtle">{t('lh.headerOffPreview')}</p>}
+        <div className={cn(!v.reportShowHeader && 'hidden')}>
         <Letterhead
           data={{
             labName: v.name || t('lh.yourLab'),
@@ -95,9 +106,12 @@ export function LetterheadClient({ initial }: { initial: LabLetterhead }) {
           docNumber="00123"
           right={<QrCode value="LabFlow|preview" size={64} />}
         />
-        <p className="mt-4 text-center text-[10px] text-subtle">
-          {v.reportFooterNote || t('report.footer')}
-        </p>
+        </div>
+        {v.reportShowFooter && (
+          <p className="mt-4 text-center text-[10px] text-subtle">
+            {v.reportFooterNote || t('report.footer')}
+          </p>
+        )}
       </Card>
 
       <Card className="p-5">
@@ -192,6 +206,39 @@ export function LetterheadClient({ initial }: { initial: LabLetterhead }) {
         />
       </Card>
 
+      <Card className="p-5">
+        <SectionHeading accent={ACCENT.violet}>{t('lh.layout')}</SectionHeading>
+        <p className="mt-1 text-xs text-subtle">{t('lh.layoutHint')}</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <Switch label={t('lh.showHeader')} hint={v.reportShowHeader ? t('lh.showHeaderOn') : t('lh.showHeaderOff')} on={v.reportShowHeader} onChange={(on) => setV({ ...v, reportShowHeader: on })} />
+          <Switch label={t('lh.showFooter')} hint={v.reportShowFooter ? t('lh.showFooterOn') : t('lh.showFooterOff')} on={v.reportShowFooter} onChange={(on) => setV({ ...v, reportShowFooter: on })} />
+          <div>
+            <label className="label" htmlFor="lh-top">{t('lh.topMargin')}</label>
+            <MmInput id="lh-top" value={v.reportTopMarginMm} onChange={(n) => setV({ ...v, reportTopMarginMm: n })} />
+          </div>
+          <div>
+            <label className="label" htmlFor="lh-bottom">{t('lh.bottomMargin')}</label>
+            <MmInput id="lh-bottom" value={v.reportBottomMarginMm} onChange={(n) => setV({ ...v, reportBottomMarginMm: n })} />
+          </div>
+          <div>
+            <span className="label">{t('lh.font')}</span>
+            <Select
+              value={v.reportFont}
+              onChange={(f) => setV({ ...v, reportFont: f as (typeof REPORT_FONTS)[number] })}
+              options={REPORT_FONTS.map((f) => ({ value: f, label: t(`lh.font.${f}`) }))}
+            />
+          </div>
+          <div>
+            <span className="label">{t('lh.size')}</span>
+            <Select
+              value={String(v.reportFontScale)}
+              onChange={(s) => setV({ ...v, reportFontScale: Number(s) })}
+              options={FONT_SCALES.map((s) => ({ value: String(s), label: t(`lh.size.${s}`) }))}
+            />
+          </div>
+        </div>
+      </Card>
+
       {error && <p className="note-danger"><Tr text={error} /></p>}
 
       <SaveBar
@@ -203,6 +250,45 @@ export function LetterheadClient({ initial }: { initial: LabLetterhead }) {
         saveLabel={t('lh.save')}
         note={t('lh.subtitle')}
       />
+    </div>
+  );
+}
+
+function Switch({ label, hint, on, onChange }: { label: string; hint: string; on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="flex items-start gap-3 rounded-xl bg-surface-2 p-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-body">{label}</p>
+        <p className="mt-0.5 text-xs text-subtle">{hint}</p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        onClick={() => onChange(!on)}
+        className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors', on ? 'bg-brand-500' : 'bg-surface-3 ring-1 ring-inset ring-line')}
+      >
+        <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'start-[22px]' : 'start-0.5')} />
+      </button>
+    </div>
+  );
+}
+
+function MmInput({ id, value, onChange }: { id: string; value: number; onChange: (n: number) => void }) {
+  return (
+    <div className="relative">
+      <input
+        id={id}
+        type="number"
+        min={5}
+        max={80}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Math.min(80, Math.max(5, Math.round(Number(e.target.value) || 5))))}
+        className="field pe-12 tabular-nums"
+      />
+      <span className="pointer-events-none absolute inset-y-0 end-0 flex items-center pe-3.5 text-sm font-semibold text-subtle">mm</span>
     </div>
   );
 }

@@ -1,9 +1,11 @@
+import { getFeatures } from '@/core/features/features.server';
 import { randomBytes } from 'crypto';
 import { tenantDb, currentTenantId } from '@/core/db/context';
 import { openCriticalNotifications } from './critical';
 import type { TenantTransactionClient } from '@/core/db/tenant';
 import { labRepository } from './lab.repository';
 import { LAB_BOARD_DAYS } from '@/modules/queue/queue.service';
+import { notifyStaff, describeLine } from '@/modules/notifications/notify';
 import {
   assertTransition,
   canEnterResults,
@@ -54,9 +56,33 @@ async function completeVisitIfDone(visitId: string) {
   }
 }
 
+/**
+ * The results time lock. Saved results stay open to their author for the
+ * minutes the lab allows, so a typo can be fixed; after that a change is a
+ * correction, and corrections go through someone who can approve. Counted from
+ * the latest save into Result Saved, so a test sent back starts a fresh window.
+ */
+async function assertResultsEditable(orderLineId: string, from: OrderLineStatus, overrideLock: boolean) {
+  if (from !== 'RESULT_SAVED' || overrideLock) return;
+  const db = await tenantDb();
+  const tenant = await db.tenant.findUnique({ where: { id: await currentTenantId() }, select: { resultEditLockMins: true } });
+  const mins = tenant?.resultEditLockMins ?? 0;
+  if (mins <= 0) return;
+  const saved = await db.workflowEvent.findFirst({
+    where: { orderLineId, toState: 'RESULT_SAVED', NOT: { fromState: 'RESULT_SAVED' } },
+    orderBy: { at: 'desc' },
+    select: { at: true },
+  });
+  if (saved && Date.now() - saved.at.getTime() > mins * 60_000) {
+    throw new Error(`These results were saved more than ${mins} ${mins === 1 ? 'minute' : 'minutes'} ago and are locked. Someone who can approve results can still change them.`);
+  }
+}
+
 export const labService = {
-  getWorkboard: async (branchId: string, from: Date, to: Date, query?: string) =>
-    labRepository.workboard(branchId, from, to, query),
+  getWorkboard: async (
+    branchId: string, from: Date, to: Date, query?: string,
+    filters?: { departmentId?: string; testStatus?: string; partnerLabId?: string },
+  ) => labRepository.workboard(branchId, from, to, query, filters),
 
   getEntry: async (orderLineId: string) => labRepository.orderLineForEntry(orderLineId),
 
@@ -139,6 +165,8 @@ export const labService = {
         data: { status: 'WAITING' },
       });
     });
+    const { stockService } = await import('@/modules/stock/stock.service');
+    await stockService.returnFor(orderLineId, actorId);
   },
 
   /** Everything a tube label needs for one visit. */
@@ -196,7 +224,7 @@ export const labService = {
    * being worked on is left alone. Delivery also leaves a Delivery record of
    * how it went out.
    */
-  async releaseVisit(visitId: string, to: 'PRINTED' | 'DELIVERED', actorId: string, channel?: 'PRINT' | 'WHATSAPP' | 'PORTAL' | 'EMAIL') {
+  async releaseVisit(visitId: string, to: 'PRINTED' | 'DELIVERED', actorId: string, channel?: 'PRINT' | 'WHATSAPP' | 'PORTAL' | 'EMAIL' | 'SMS') {
     const db = await tenantDb();
     const from = to === 'PRINTED' ? ['APPROVED'] : ['APPROVED', 'PRINTED'];
     const lines = await db.orderLine.findMany({
@@ -260,6 +288,9 @@ export const labService = {
     const results = await db.resultValue.count({ where: { orderLineId, value: { not: null } } });
     if (results > 0) throw new Error('Results have been entered for this test. Clear them before asking for a retake.');
     await labService.transition(orderLineId, 'RETAKE', actorId, reason ? `Retake: ${reason}` : 'Retake requested');
+    const d = await describeLine(orderLineId);
+    // The counter calls the patient back; the bench waits for the new tube.
+    await notifyStaff(['visit.create', 'sample.collect'], { key: 'notify.retake', params: { ...d, reason } }, { link: `/lab?q=${d.slip}`, kind: 'RETAKE', excludeUserId: actorId });
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     await db.queueToken.updateMany({
@@ -301,6 +332,7 @@ export const labService = {
       sensitivities: { antibiotic: string; result: 'S' | 'I' | 'R'; mic?: string }[];
     },
     enteredById: string,
+    opts: { overrideLock?: boolean } = {},
   ) {
     const db = await tenantDb();
     const line = await db.orderLine.findUnique({ where: { id: orderLineId }, select: { status: true, test: { select: { reportFormat: true } } } });
@@ -310,6 +342,7 @@ export const labService = {
     if (input.growth && !input.organism?.trim()) throw new Error('Name the organism that grew.');
     const tenantId = await currentTenantId();
     const from = line.status as OrderLineStatus;
+    await assertResultsEditable(orderLineId, from, opts.overrideLock === true);
     await db.$transaction(async (tx) => {
       const data = {
         growth: input.growth,
@@ -344,6 +377,39 @@ export const labService = {
     });
   },
 
+  /**
+   * Mark results pending: take a slip's released tests back to Result Saved so
+   * a wrong value can be corrected. Their approval is cleared, so the report is
+   * withdrawn — from the counter and the portal — until someone approves again.
+   *
+   * Deliberately not a transition in the workflow table: that table is what the
+   * board's buttons move along, and "un-release" must never be one tap away.
+   * It is its own action, behind approve rights, with a reason on every test.
+   */
+  async reopenResults(visitId: string, actorId: string, reason: string) {
+    const db = await tenantDb();
+    const lines = await db.orderLine.findMany({
+      where: { visitId, status: { in: ['APPROVED', 'PRINTED', 'DELIVERED'] } },
+      select: { id: true, status: true },
+    });
+    if (lines.length === 0) throw new Error('No released results on this slip.');
+    const tenantId = await currentTenantId();
+    await db.$transaction(async (tx) => {
+      for (const l of lines) {
+        await tx.orderLine.update({ where: { id: l.id }, data: { status: 'RESULT_SAVED' } });
+        await tx.resultValue.updateMany({ where: { orderLineId: l.id }, data: { approvedById: null, approvedAt: null } });
+        await logEvent(tx, l.id, l.status as OrderLineStatus, 'RESULT_SAVED', actorId, `Marked pending: ${reason}`);
+      }
+      await tx.auditLog.create({
+        data: {
+          tenantId, actorId, entity: 'Visit', entityId: visitId, action: 'RESULTS_REOPENED',
+          after: JSON.stringify({ reason, tests: lines.length }),
+        },
+      });
+    });
+    return lines.length;
+  },
+
   /** Record why a test is running late. Shown on the board and the delayed-tests report. */
   async markDelayed(orderLineId: string, actorId: string, reason: string) {
     const db = await tenantDb();
@@ -362,6 +428,9 @@ export const labService = {
         },
       });
     });
+    const d = await describeLine(orderLineId);
+    // Whoever hands reports over is the one the patient will ask.
+    await notifyStaff(['report.print', 'report.deliver'], { key: 'notify.delayed', params: { ...d, reason } }, { link: `/lab?q=${d.slip}`, kind: 'DELAYED', excludeUserId: actorId });
   },
 
   /** Advance an order line one step (collect, start, print, etc.). */
@@ -422,6 +491,11 @@ export const labService = {
       }
     });
     await completeVisitIfDone(line.visitId);
+    // What the test uses comes off stock when its tube is drawn.
+    if (to === 'SAMPLE_COLLECTED') {
+      const { stockService } = await import('@/modules/stock/stock.service');
+      await stockService.consumeFor(orderLineId, actorId);
+    }
   },
 
   /**
@@ -434,6 +508,7 @@ export const labService = {
     rawByCode: Record<string, string>,
     enteredById: string,
     remarks?: string,
+    opts: { overrideLock?: boolean } = {},
   ): Promise<ComputedResult[]> {
     const line = await labRepository.orderLineForEntry(orderLineId);
     if (!line) throw new Error('Order line not found');
@@ -473,6 +548,9 @@ export const labService = {
     });
 
     const from = line.status as OrderLineStatus;
+    await assertResultsEditable(orderLineId, from, opts.overrideLock === true);
+    let criticalFound = 0;
+    const criticalOn = (await getFeatures())['lab.critical'];
     await (await tenantDb()).$transaction(async (tx) => {
       for (const c of computed) {
         await tx.resultValue.upsert({
@@ -514,8 +592,17 @@ export const labService = {
 
       // A critical value opens a callback the moment it is saved — before
       // approval, because the clinician needs to know now, not after sign-off.
-      await openCriticalNotifications(tx, tenantId, orderLineId);
+      if (criticalOn) criticalFound = await openCriticalNotifications(tx, tenantId, orderLineId);
     });
+
+    // Said once, when the value is first saved — not again on every edit.
+    if (criticalFound > 0 && from !== 'RESULT_SAVED') {
+      await notifyStaff(
+        ['critical.manage'],
+        { key: 'notify.critical', params: { test: line.test.name, patient: line.visit.patient.fullName, slip: line.visit.slipNo } },
+        { link: '/lab/critical', kind: 'CRITICAL' },
+      );
+    }
 
     return computed;
   },
@@ -683,6 +770,8 @@ export const labService = {
 
   /** Send a saved result back to the technician for correction. */
   async sendBack(orderLineId: string, actorId: string) {
-    await this.transition(orderLineId, 'IN_PROGRESS', actorId);
+    await this.transition(orderLineId, 'IN_PROGRESS', actorId, 'Sent back for correction');
+    const d = await describeLine(orderLineId);
+    await notifyStaff(['result.enter'], { key: 'notify.sentBack', params: d }, { link: `/lab/result/${orderLineId}`, kind: 'SENT_BACK', excludeUserId: actorId });
   },
 };

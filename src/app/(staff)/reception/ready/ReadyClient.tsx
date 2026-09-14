@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/components/ui/Toast';
 import { whatsappLink } from '@/lib/whatsapp';
+import { renderTemplate } from '@/modules/messages/templates';
 import { markReportDeliveredAction, type ReadyReportDTO } from '@/modules/lab/lab.actions';
 
 /**
@@ -20,8 +21,8 @@ import { markReportDeliveredAction, type ReadyReportDTO } from '@/modules/lab/la
  * owed a report — the question a receptionist is asked all day.
  */
 export function ReadyClient({
-  initial, labName, portalLink,
-}: { initial: ReadyReportDTO[]; labName: string; portalLink: string }) {
+  initial, labName, portalLink, waTemplate,
+}: { initial: ReadyReportDTO[]; labName: string; portalLink: string; waTemplate: string | null }) {
   const { t } = useI18n();
   const toast = useToast();
   const [items, setItems] = useState(initial);
@@ -29,11 +30,10 @@ export function ReadyClient({
 
   async function deliver(it: ReadyReportDTO, channel: 'PRINT' | 'WHATSAPP') {
     if (channel === 'WHATSAPP') {
-      const link = it.mobile ? whatsappLink(it.mobile, t('ready.waMessage')
-        .replace('{name}', it.patientName)
-        .replace('{lab}', labName)
-        .replace('{slip}', it.slipNo)
-        .replace('{link}', portalLink)) : null;
+      const text = waTemplate
+        ? renderTemplate(waTemplate, { patient: it.patientName, lab: labName, slip: it.slipNo, link: portalLink })
+        : t('ready.waMessage').replace('{name}', it.patientName).replace('{lab}', labName).replace('{slip}', it.slipNo).replace('{link}', portalLink);
+      const link = it.mobile ? whatsappLink(it.mobile, text) : null;
       if (!link) { toast('error', t('ready.noMobile')); return; }
       window.open(link, '_blank', 'noopener');
     }

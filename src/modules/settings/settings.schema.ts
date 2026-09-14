@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FONT_SCALES, REPORT_FONTS } from '@/modules/reporting/layout';
 
 /**
  * Commercial policy for the lab. Every field here changes what a patient is
@@ -11,6 +12,10 @@ export const labPolicySchema = z.object({
   familyCardFee: z.coerce.number().min(0, 'Cannot be negative').max(1_000_000),
   familyCardDiscountOnIssue: z.coerce.boolean(),
   allowSelfVerify: z.coerce.boolean(),
+  resultEditLockMins: z.coerce.number().int('Must be a whole number').min(0, 'Cannot be negative').max(10080, 'At most a week'),
+  refundWindowHours: z.coerce.number().int('Must be a whole number').min(0, 'Cannot be negative').max(8760, 'At most a year'),
+  reportHistoryColumns: z.coerce.number().int('Must be a whole number').min(1, 'Show at least one').max(6, 'At most 6 fit on a page'),
+  reportHistoryByDefault: z.coerce.boolean(),
 });
 export type LabPolicyInput = z.infer<typeof labPolicySchema>;
 
@@ -28,6 +33,12 @@ export const letterheadSchema = z.object({
   licenseNo: z.string().max(60).optional().or(z.literal('').transform(() => undefined)),
   email: z.string().email('That is not a valid email').max(120).optional().or(z.literal('').transform(() => undefined)),
   reportFooterNote: z.string().max(300).optional().or(z.literal('').transform(() => undefined)),
+  reportShowHeader: z.boolean().default(true),
+  reportShowFooter: z.boolean().default(true),
+  reportTopMarginMm: z.coerce.number().int('Whole millimetres').min(5, 'At least 5 mm').max(80, 'At most 80 mm').default(14),
+  reportBottomMarginMm: z.coerce.number().int('Whole millimetres').min(5, 'At least 5 mm').max(80, 'At most 80 mm').default(14),
+  reportFont: z.enum(REPORT_FONTS).default('DEFAULT'),
+  reportFontScale: z.coerce.number().refine((n) => (FONT_SCALES as readonly number[]).includes(n), 'Choose a text size').default(100),
   logoDataUrl: z
     .string()
     .max(MAX_LOGO_BYTES, 'That image is too large — use one under 200 KB')

@@ -5,6 +5,7 @@ import { tenantDb, currentTenantId } from '@/core/db/context';
 import { getReportData } from '@/modules/reporting/reporting.service';
 import { AccessDenied } from '@/components/ui/AccessDenied';
 import { StaffReport } from './StaffReport';
+import { messagesService } from '@/modules/messages/messages.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,7 @@ export default async function StaffReportPage({ params }: { params: { visitId: s
     db.tenant.findUnique({ where: { id: await currentTenantId() }, select: { code: true, name: true } }),
     db.orderLine.findMany({ where: { visitId: params.visitId }, select: { status: true } }),
   ]);
+  const wa = await messagesService.template('WHATSAPP_REPORT');
   const h = headers();
   const host = h.get('x-forwarded-host') ?? h.get('host') ?? '';
   const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
@@ -34,6 +36,7 @@ export default async function StaffReportPage({ params }: { params: { visitId: s
       portalLink={`${proto}://${host}/portal?lab=${encodeURIComponent(tenant?.code ?? '')}`}
       delivered={active.length > 0 && active.every((l) => l.status === 'DELIVERED')}
       printed={active.some((l) => l.status === 'PRINTED' || l.status === 'DELIVERED')}
+      waTemplate={wa.custom ? wa.body : null}
     />
   );
 }

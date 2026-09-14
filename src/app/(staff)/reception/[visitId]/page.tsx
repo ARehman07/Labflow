@@ -1,3 +1,4 @@
+import { featureOn } from '@/core/features/features.server';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { receptionService } from '@/modules/reception/reception.service';
@@ -16,10 +17,11 @@ export default async function SlipPage({ params }: { params: { visitId: string }
   const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
 
   const active = visit.orderLines.filter((l) => l.status !== 'CANCELLED');
-  const [canModify, canCancel, canCreate, prices] = await Promise.all([
+  const [canModify, canCancel, canCreate, canReopen, prices] = await Promise.all([
     can('visit.modify'),
     can('visit.cancel'),
     can('visit.create'),
+    can('result.approve'),
     priceTests(visit.branchId, active.map((l) => l.testId), { includeInactive: true }),
   ]);
 
@@ -65,7 +67,18 @@ export default async function SlipPage({ params }: { params: { visitId: string }
       id: l.id, testId: l.testId, name: l.test.name, status: l.status,
       price: l.price != null ? Number(l.price) : (prices.get(l.testId)?.price ?? 0),
     })),
-    can: { modify: canModify, cancel: canCancel },
+    can: { modify: canModify, cancel: canCancel, reopen: canReopen },
+    patient: {
+      fullName: visit.patient.fullName,
+      mobile: visit.patient.mobile,
+      cnic: visit.patient.cnic,
+      sex: visit.patient.sex,
+      dateOfBirth: visit.patient.dateOfBirth ? visit.patient.dateOfBirth.toISOString().slice(0, 10) : null,
+      age: visit.patient.age,
+      ageUnit: visit.patient.ageUnit,
+      address: visit.patient.address,
+    },
+    releasedCount: active.filter((l) => ['APPROVED', 'PRINTED', 'DELIVERED'].includes(l.status)).length,
     gross: Number(visit.invoice.grossAmount),
     discount: Number(visit.invoice.discount),
     careOfName: visit.invoice.careOfUser?.fullName ?? null,
@@ -76,6 +89,7 @@ export default async function SlipPage({ params }: { params: { visitId: string }
     paid: Number(visit.invoice.paidAmount),
     paymentMethods: [...new Set(visit.invoice.payments.map((p) => p.method))],
     portalUrl: `${proto}://${host}/portal`,
+    showPortal: await featureOn('patients.portal'),
     cardFee: Number(visit.invoice.familyCardFee ?? 0),
     net: Number(visit.invoice.netAmount),
   };

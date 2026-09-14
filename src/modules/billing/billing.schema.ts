@@ -15,3 +15,12 @@ export const refundSchema = z.object({
   accountId: z.string().optional(),
 });
 export type RefundInput = z.infer<typeof refundSchema>;
+
+/** Mark dues pending: take back money recorded as paid that never came in. */
+export const reversePaymentSchema = z.object({
+  invoiceId: z.string().min(1),
+  amount: z.coerce.number().positive('Amount must be greater than zero'),
+  reason: z.string().trim().min(3, 'Say why this payment is being taken back').max(200),
+  accountId: z.string().optional(),
+});
+export type ReversePaymentInput = z.infer<typeof reversePaymentSchema>;

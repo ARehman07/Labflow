@@ -20,12 +20,13 @@ import {
   getInvoiceDetailAction,
   recordPaymentAction,
   issueRefundAction,
+  reversePaymentAction,
   type InvoiceDTO,
   type InvoiceDetailDTO,
   type BillingSummaryDTO,
 } from '@/modules/billing/billing.actions';
 import { listPaymentAccountsAction, type PaymentAccountDTO } from '@/modules/accounts/accounts.actions';
-import { ChevronRight, Printer } from 'lucide-react';
+import { ChevronRight, Printer, Undo2 } from 'lucide-react';
 import { Tr } from '@/components/ui/Tr';
 
 type Filter = 'ALL' | 'DUE' | 'PAID';
@@ -244,7 +245,9 @@ function InvoiceDrawer({
   const { t } = useI18n();
   const toast = useToast();
   const [d, setD] = useState<InvoiceDetailDTO | null>(null);
-  const [mode, setMode] = useState<'NONE' | 'PAY' | 'REFUND'>('NONE');
+  const [mode, setMode] = useState<'NONE' | 'PAY' | 'REFUND' | 'DUE'>('NONE');
+  // The movement just saved, so its slip can be printed while the patient is still at the counter.
+  const [lastTx, setLastTx] = useState<{ kind: 'payment' | 'refund'; id: string } | null>(null);
 
   const reload = useCallback(() => { getInvoiceDetailAction(invoiceId).then(setD); }, [invoiceId]);
   useEffect(() => reload(), [reload]);
@@ -362,23 +365,33 @@ function InvoiceDrawer({
                 <p className="py-3 text-center text-sm text-subtle">{t('billing.noPayments')}</p>
               ) : (
                 <ul className="space-y-3">
-                  {d.payments.map((p, i) => (
-                    <li key={i} className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ok-soft text-emerald-600"><ArrowDownLeft className="h-4 w-4" /></span>
+                  {d.payments.map((p) => (
+                    <li key={p.id} className="flex items-center gap-3">
+                      {p.amount >= 0 ? (
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ok-soft text-emerald-600"><ArrowDownLeft className="h-4 w-4" /></span>
+                      ) : (
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-warn-soft text-warn-text"><Undo2 className="h-4 w-4" /></span>
+                      )}
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-bold text-body">+ {formatPkr(p.amount)}</div>
-                        <div className="text-[11px] text-subtle">{p.date}</div>
+                        <div className={cn('text-sm font-bold', p.amount >= 0 ? 'text-body' : 'text-warn-text')}>
+                          {p.amount >= 0 ? '+' : '−'} {formatPkr(Math.abs(p.amount))}
+                        </div>
+                        <div className="truncate text-[11px] text-subtle">
+                          {p.amount < 0 && `${t('billing.markedDue')}${p.note ? ` · ${p.note}` : ''} · `}{p.date}
+                        </div>
                       </div>
-                      <Badge tone={METHOD_TONE[p.method] ?? 'neutral'} size="sm">{methodLabel(p.method)}</Badge>
+                      {p.amount >= 0 && <Badge tone={METHOD_TONE[p.method] ?? 'neutral'} size="sm">{methodLabel(p.method)}</Badge>}
+                      <PrintRow href={`/billing/receipt/payment/${p.id}`} label={t('billing.printRow')} />
                     </li>
                   ))}
-                  {d.refunds.map((r, i) => (
-                    <li key={`r${i}`} className="flex items-center gap-3">
+                  {d.refunds.map((r) => (
+                    <li key={r.id} className="flex items-center gap-3">
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-300"><ArrowUpRight className="h-4 w-4" /></span>
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-bold text-rose-600">− {formatPkr(r.amount)}</div>
                         <div className="truncate text-[11px] text-subtle">{t('billing.refundsLabel')}{r.reason ? ` · ${r.reason}` : ''} · {r.date}</div>
                       </div>
+                      <PrintRow href={`/billing/receipt/refund/${r.id}`} label={t('billing.printRow')} />
                     </li>
                   ))}
                 </ul>
@@ -391,6 +404,12 @@ function InvoiceDrawer({
         {d && (
           <div className="border-t border-line p-4">
             {mode === 'NONE' ? (
+              <div className="space-y-2">
+              {lastTx && (
+                <Link href={`/billing/receipt/${lastTx.kind}/${lastTx.id}`} className={buttonVariants({ variant: 'secondary', className: 'w-full' })}>
+                  <Printer className="h-4 w-4" /> {t('billing.printTxSlip')}
+                </Link>
+              )}
               <div className="flex gap-2">
                 {/* The slip doubles as the receipt: it now shows what was paid and what is still due. */}
                 {d.paid > 0 && (
@@ -403,8 +422,19 @@ function InvoiceDrawer({
                   <Button variant="outline" className="flex-1" onClick={() => setMode('REFUND')}>{t('billing.refund')}</Button>
                 )}
                 {d.balance === 0 && !(canRefund && d.paid > 0) && (
-                  <Button variant="secondary" className="w-full" onClick={onClose}>{t('billing.close')}</Button>
+                  <Button variant="secondary" className="flex-1" onClick={onClose}>{t('billing.close')}</Button>
                 )}
+              </div>
+              {/* Rare, and it takes money off the books, so it is a quiet link rather than a button. */}
+              {canRefund && d.paid > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setMode('DUE')}
+                  className="w-full rounded-lg py-1 text-center text-xs font-semibold text-muted transition-colors hover:text-brand-700 dark:hover:text-brand-300"
+                >
+                  {t('billing.markDue')}
+                </button>
+              )}
               </div>
             ) : (
               <ActionForm
@@ -412,7 +442,11 @@ function InvoiceDrawer({
                 invoiceId={d.id}
                 maxAmount={mode === 'PAY' ? d.balance : d.paid}
                 onCancel={() => setMode('NONE')}
-                onDone={() => { setMode('NONE'); reload(); onChanged(); toast('success', mode === 'PAY' ? t('billing.confirm') : t('billing.confirmRefund')); }}
+                onDone={(txId) => {
+                  if (txId) setLastTx({ kind: mode === 'REFUND' ? 'refund' : 'payment', id: txId });
+                  setMode('NONE'); reload(); onChanged();
+                  toast('success', mode === 'PAY' ? t('billing.confirm') : mode === 'REFUND' ? t('billing.confirmRefund') : t('billing.dueDone'));
+                }}
               />
             )}
           </div>
@@ -445,9 +479,17 @@ function Row({ label, value, strong, className }: { label: string; value: string
   );
 }
 
+function PrintRow({ href, label }: { href: string; label: string }) {
+  return (
+    <Link href={href} title={label} aria-label={label} className="shrink-0 rounded-lg p-1.5 text-subtle transition-colors hover:bg-surface-3 hover:text-strong">
+      <Printer className="h-3.5 w-3.5" />
+    </Link>
+  );
+}
+
 function ActionForm({
   mode, invoiceId, maxAmount, onCancel, onDone,
-}: { mode: 'PAY' | 'REFUND'; invoiceId: string; maxAmount: number; onCancel: () => void; onDone: () => void }) {
+}: { mode: 'PAY' | 'REFUND' | 'DUE'; invoiceId: string; maxAmount: number; onCancel: () => void; onDone: (txId?: string) => void }) {
   const { t } = useI18n();
   const [amount, setAmount] = useState(maxAmount);
   // Which till or account the money goes into (or comes back out of).
@@ -468,14 +510,17 @@ function ActionForm({
     startTransition(async () => {
       const res = mode === 'PAY'
         ? await recordPaymentAction({ invoiceId, amount, method, accountId: accountId || undefined })
-        : await issueRefundAction({ invoiceId, amount, reason: reason || undefined, accountId: accountId || undefined });
-      if (res.ok) onDone();
+        : mode === 'REFUND'
+          ? await issueRefundAction({ invoiceId, amount, reason: reason || undefined, accountId: accountId || undefined })
+          : await reversePaymentAction({ invoiceId, amount, reason, accountId: accountId || undefined });
+      if (res.ok) onDone(res.txId);
       else setError(res.error);
     });
   }
 
   return (
     <div className="animate-fade-in-up space-y-3">
+      {mode === 'DUE' && <p className="text-xs text-muted">{t('billing.markDueHint')}</p>}
       <div className="grid grid-cols-2 gap-3">
         <div>
           <span className="mb-1 block text-xs font-medium text-muted">{t('billing.amount')}</span>
@@ -493,17 +538,17 @@ function ActionForm({
           <Select value={accountId} onChange={setAccountId} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
         </div>
       </div>
-      {mode === 'REFUND' && (
+      {mode !== 'PAY' && (
         <div>
-          <span className="mb-1 block text-xs font-medium text-muted">{t('billing.refundReason')}</span>
-          <input value={reason} onChange={(e) => setReason(e.target.value)} className="field" />
+          <span className="mb-1 block text-xs font-medium text-muted">{mode === 'DUE' ? t('billing.dueReason') : t('billing.refundReason')}</span>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} className="field" />
         </div>
       )}
       {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
       <div className="flex gap-2">
         <Button variant="ghost" onClick={onCancel}>{t('common.cancel')}</Button>
-        <Button className="flex-1" onClick={submit} loading={isPending} disabled={amount <= 0}>
-          {mode === 'PAY' ? t('billing.confirm') : t('billing.confirmRefund')}
+        <Button className="flex-1" onClick={submit} loading={isPending} disabled={amount <= 0 || (mode === 'DUE' && reason.trim().length < 3)}>
+          {mode === 'PAY' ? t('billing.confirm') : mode === 'REFUND' ? t('billing.confirmRefund') : t('billing.confirmDue')}
         </Button>
       </div>
     </div>

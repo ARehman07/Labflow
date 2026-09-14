@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useFeatures } from '@/core/features/FeaturesProvider';import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronRight, LogOut, Menu, X } from 'lucide-react';
@@ -33,8 +33,9 @@ export function MobileNav({
   const [open, setOpen] = useState(false);
   const [counts, setCounts] = useState<NavCounts>({ critical: 0, notifiable: 0, ready: 0 });
 
-  const tabs = phoneTabs(permissions);
-  const groups = visibleGroups(permissions);
+  const features = useFeatures();
+  const tabs = phoneTabs(permissions, features);
+  const groups = visibleGroups(permissions, features);
 
   useEffect(() => {
     const load = () => getNavCountsAction().then(setCounts).catch(() => {});

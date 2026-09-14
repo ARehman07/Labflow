@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, History, Lock, MessageSquareText, TriangleAlert } from 'lucide-react';
+import { ArrowRight, History, Lock, MessageSquareText, Sparkles, TriangleAlert } from 'lucide-react';
+import { aiInterpretTestAction, aiStatusAction } from '@/modules/ai/ai.actions';
 import { Button } from '@/components/ui/Button';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
@@ -48,6 +49,17 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
   }, [entry]);
   const [values, setValues] = useState<Record<string, string>>(initialValues);
   const [remarks, setRemarks] = useState(entry.remarks);
+  // An AI draft comment, for the technologist to read and use or ignore.
+  const [aiOn, setAiOn] = useState(false);
+  const [aiText, setAiText] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  useEffect(() => { aiStatusAction().then((s) => setAiOn(s.configured)).catch(() => {}); }, []);
+  async function aiDraft() {
+    setAiBusy(true);
+    const res = await aiInterpretTestAction(entry.orderLineId);
+    setAiBusy(false);
+    if (res.ok) setAiText(res.text); else toast('error', res.error);
+  }
   const [savedRemarks, setSavedRemarks] = useState(entry.remarks);
   const [baseline, setBaseline] = useState<Record<string, string>>(initialValues);
   const dirty = JSON.stringify(values) !== JSON.stringify(baseline) || remarks !== savedRemarks;
@@ -285,7 +297,22 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
       {/* Printed on the report under this test — interpretation, a comment on
           the sample, a suggestion to repeat. Booking comments stay internal. */}
       <div className="card p-4">
-        <label htmlFor="result-remarks" className="label">{t('result.remarks')}</label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label htmlFor="result-remarks" className="label">{t('result.remarks')}</label>
+          <Button variant="ghost" size="sm" onClick={aiDraft} loading={aiBusy} disabled={!aiOn} title={aiOn ? t('ai.analyzeHint') : t('ai.off')}>
+            <Sparkles className="h-3.5 w-3.5" /> {t('ai.analyze')}
+          </Button>
+        </div>
+        {aiText && (
+          <div className="mb-2 rounded-xl border border-brand-500/25 bg-brand-500/[0.05] p-3 text-sm">
+            <p className="whitespace-pre-wrap text-body">{aiText}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {editable && <Button size="sm" variant="outline" onClick={() => { setRemarks((r) => (r.trim() ? `${r.trim()}\n${aiText}` : aiText)); setAiText(null); }}>{t('ai.useInRemarks')}</Button>}
+              <Button size="sm" variant="ghost" onClick={() => setAiText(null)}>{t('common.close')}</Button>
+              <span className="text-xs text-subtle">{t('ai.disclaimer')}</span>
+            </div>
+          </div>
+        )}
         <textarea
           id="result-remarks"
           value={remarks}

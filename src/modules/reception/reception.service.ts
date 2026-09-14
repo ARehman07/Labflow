@@ -1,3 +1,6 @@
+import { getFeatures } from '@/core/features/features.server';
+import { SAMPLE_SOURCE_FEATURES } from '@/core/features/catalog';
+import type { SlipPatientInput } from './reception.schema';
 import { tenantDb, currentTenantId } from '@/core/db/context';
 import { computeInvoiceTotals } from '@/modules/billing/discount';
 import { familyCardService } from '@/modules/familycard/familycard.service';
@@ -89,6 +92,12 @@ export const receptionService = {
     ctx: { userId: string; branchId: string },
   ): Promise<{ visitId: string }> {
     const db0 = await tenantDb();
+    // What this lab has switched off is refused here as well as hidden on screen.
+    const features = await getFeatures();
+    if (input.partnerLabId && !features['booking.b2b']) throw new BookingEditError('B2B bookings are switched off for this lab.');
+    if (input.collectionPointId && !features['booking.collectionPoints']) throw new BookingEditError('Collection points are switched off for this lab.');
+    if (input.packageIds.length > 0 && !features['booking.packages']) throw new BookingEditError('Test packages are switched off for this lab.');
+    if (!features[SAMPLE_SOURCE_FEATURES[input.sampleSource]]) throw new BookingEditError('That way of taking the sample is switched off for this lab.');
     // A partner lab that sent the sample: its price list applies, and unless it
     // pays per booking in cash, the bill goes to its account, not the patient.
     const partner = input.partnerLabId
@@ -105,8 +114,12 @@ export const receptionService = {
       : null;
     if (input.collectionPointId && !collectionPoint) throw new BookingEditError('That collection point is not available.');
     const rateGroupId = input.rateGroupId ?? collectionPoint?.rateGroupId ?? partner?.rateGroupId ?? null;
-    if (rateGroupId && !(await db0.rateGroup.findFirst({ where: { id: rateGroupId, isActive: true }, select: { id: true } }))) {
-      throw new BookingEditError('That price list is not available.');
+    const rateGroup = rateGroupId ? await db0.rateGroup.findFirst({ where: { id: rateGroupId, isActive: true }, select: { id: true, atCounter: true } }) : null;
+    if (rateGroupId && !rateGroup) throw new BookingEditError('That price list is not available.');
+    // Chosen at the counter rather than brought by a partner lab or collection point.
+    const pickedAtCounter = input.rateGroupId != null && input.rateGroupId !== collectionPoint?.rateGroupId && input.rateGroupId !== partner?.rateGroupId;
+    if (pickedAtCounter && (!features['booking.priceLists'] || !rateGroup?.atCounter)) {
+      throw new BookingEditError('That price list is not offered at the counter.');
     }
 
     const wanted = [...new Set(input.packageIds)];
@@ -140,7 +153,9 @@ export const receptionService = {
     // Discount policy is resolved on the SERVER, from lab configuration —
     // never from what the browser sent. A card holder gets the card rate; a
     // manual entry is discarded rather than added. See modules/billing/discount.
-    const existingCard = await familyCardService.findForPatient(input.patientId);
+    const cardsOn = features['booking.familyCards'];
+    const cardMode = cardsOn ? input.familyCardMode : 'NONE';
+    const existingCard = cardsOn ? await familyCardService.findForPatient(input.patientId) : null;
     const tenant = await (await tenantDb()).tenant.findUniqueOrThrow({
       where: { id: await currentTenantId() },
       select: {
@@ -155,15 +170,15 @@ export const receptionService = {
     // number, or be created here. Only creating one charges the joining fee —
     // joining a family member's card costs nothing, it is already paid for.
     const joiningCard =
-      !existingCard && input.familyCardMode === 'JOIN' && input.familyCardMobile
+      !existingCard && cardMode === 'JOIN' && input.familyCardMobile
         ? await familyCardService.findJoinable(input.familyCardMobile, input.patientId)
         : null;
 
-    if (!existingCard && input.familyCardMode === 'JOIN' && !joiningCard) {
+    if (!existingCard && cardMode === 'JOIN' && !joiningCard) {
       throw new Error('That family card cannot be used — check the number, or it may be full.');
     }
 
-    const issuingCard = input.familyCardMode === 'CREATE' && !existingCard && !joiningCard;
+    const issuingCard = cardMode === 'CREATE' && !existingCard && !joiningCard;
     const cardFee = issuingCard ? Number(tenant.familyCardFee) : 0;
 
     const effectivePct = existingCard
@@ -175,7 +190,7 @@ export const receptionService = {
           : null;
 
     const card = existingCard ?? joiningCard;
-    const doctor = input.doctorId
+    const doctor = input.doctorId && features['booking.referringDoctor']
       ? await (await tenantDb()).doctor.findUnique({
           where: { id: input.doctorId },
           select: { id: true, patientDiscountPct: true, commissionPct: true },
@@ -187,7 +202,7 @@ export const receptionService = {
       gross,
       familyCardPct: effectivePct,
       doctorPct: doctor ? Number(doctor.patientDiscountPct) : null,
-      manual: input.manualDiscount ?? null,
+      manual: features['booking.manualDiscount'] ? input.manualDiscount ?? null : null,
       cardFee,
     });
     const discount = totals.discount;
@@ -227,10 +242,10 @@ export const receptionService = {
           slipNo: formatSlipNo(slipSeq),
           patientId: input.patientId,
           branchId: ctx.branchId,
-          doctorId: input.doctorId ?? null,
-          notes: input.notes ?? null,
+          doctorId: doctor?.id ?? null,
+          notes: features['booking.comments'] ? input.notes ?? null : null,
           sampleSource: input.sampleSource,
-          reportDueAt: input.reportDueAt
+          reportDueAt: (features['booking.reportDue'] ? input.reportDueAt : undefined)
             ?? new Date(now.getTime() + Math.max(...allTestIds.map((id) => tatMap.get(id) ?? 24)) * 3600_000),
           rateGroupId,
           collectionPointId: collectionPoint?.id ?? null,
@@ -243,7 +258,7 @@ export const receptionService = {
               testId: l.testId,
               price: l.price,
               packageId: l.packageId,
-              bookingRemarks: input.testRemarks[l.testId] || null,
+              bookingRemarks: features['booking.testNotes'] ? input.testRemarks[l.testId] || null : null,
               status: 'BOOKED',
               dueAt: new Date(now.getTime() + (tatMap.get(l.testId) ?? 24) * 3600_000),
             })),
@@ -261,9 +276,8 @@ export const receptionService = {
               status: 'DUE',
             },
           },
-          token: {
-            create: { tenantId, number: tokenNumber, status: 'WAITING' },
-          },
+          // No waiting room, no token.
+          ...(features['lab.queue'] ? { token: { create: { tenantId, number: tokenNumber, status: 'WAITING' as const } } } : {}),
         },
       });
 
@@ -326,7 +340,7 @@ export const receptionService = {
       // never exist "paid" without its payment row or the other way round.
       // Same rules as Billing: capped at the bill, invoice status recomputed,
       // and the referring doctor's commission accrued on what was received.
-      if (input.payment && net > 0 && !billedToPartner) {
+      if (input.payment && net > 0 && !billedToPartner && features['booking.payAtCounter']) {
         const amount = Math.min(input.payment.amount, net);
         const invoiceRow = await tx.invoice.findUniqueOrThrow({ where: { visitId: visit.id }, select: { id: true } });
         const account = input.payment.accountId
@@ -344,7 +358,7 @@ export const receptionService = {
           where: { id: invoiceRow.id },
           data: { paidAmount: amount, status: statusFor(net, amount) },
         });
-        if (doctor && Number(doctor.commissionPct) > 0) {
+        if (doctor && Number(doctor.commissionPct) > 0 && features['money.referrals']) {
           const commission = (amount * Number(doctor.commissionPct)) / 100;
           if (commission > 0) {
             await tx.commission.create({
@@ -677,6 +691,41 @@ export const receptionService = {
     });
     if (visit.partnerLabId) await partnersService.reconcile(visit.partnerLabId);
     return { refundDue: Math.max(0, paid - net) };
+  },
+
+  /**
+   * Modify slip: correct the patient's details — a misspelt name, the wrong
+   * mobile, an age typed as months. It is the patient record that changes, so
+   * every slip and report for this MR number shows the correction; the audit row
+   * keeps what it said before.
+   */
+  async updateSlipPatient(visitId: string, input: SlipPatientInput, userId: string) {
+    const db = await tenantDb();
+    const visit = await db.visit.findUnique({ where: { id: visitId }, include: { patient: true } });
+    if (!visit) throw new Error('Slip not found');
+    const p = visit.patient;
+    const derived = input.dateOfBirth ? ageFromDob(input.dateOfBirth) : null;
+    const data = {
+      fullName: input.fullName.trim(),
+      mobile: input.mobile ?? null,
+      cnic: input.cnic ?? null,
+      sex: input.sex ?? null,
+      address: input.address?.trim() || null,
+      dateOfBirth: input.dateOfBirth ?? null,
+      age: derived ? derived.age : input.age ?? null,
+      ageUnit: derived ? derived.unit : input.ageUnit,
+    };
+    const tenantId = await currentTenantId();
+    await db.$transaction(async (tx) => {
+      await tx.patient.update({ where: { id: p.id }, data });
+      await tx.auditLog.create({
+        data: {
+          tenantId, actorId: userId, entity: 'Patient', entityId: p.id, action: 'PATIENT_UPDATE',
+          before: JSON.stringify({ fullName: p.fullName, mobile: p.mobile, cnic: p.cnic, sex: p.sex, address: p.address, dateOfBirth: p.dateOfBirth, age: p.age, ageUnit: p.ageUnit }),
+          after: JSON.stringify({ ...data, fromSlip: visit.slipNo }),
+        },
+      });
+    });
   },
 
   async getSlip(visitId: string) {

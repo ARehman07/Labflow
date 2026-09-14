@@ -1,5 +1,6 @@
 'use server';
 
+import { featureOn } from '@/core/features/features.server';
 import { can, currentUser, requirePermission } from '@/core/rbac/guard';
 import { parseScan } from '@/lib/scan';
 import { tenantDb } from '@/core/db/context';
@@ -28,7 +29,7 @@ export interface PatientProfileDTO {
   card: { mobile: string; discountPct: number; isActive: boolean; holder: boolean } | null;
   visits: PatientVisitDTO[];
   totals: { visits: number; billed: number; outstanding: number };
-  can: { book: boolean; billing: boolean; report: boolean };
+  can: { book: boolean; billing: boolean; report: boolean; documents: boolean };
 }
 
 const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'];
@@ -109,7 +110,7 @@ export async function getPatientProfileAction(patientId: string): Promise<Patien
       billed: visits.reduce((s, v) => s + (v.invoice?.net ?? 0), 0),
       outstanding: visits.reduce((s, v) => s + Math.max(0, (v.invoice?.net ?? 0) - (v.invoice?.paid ?? 0)), 0),
     },
-    can: { book, billing, report },
+    can: { book, billing, report, documents: (await can('document.manage')) && (await featureOn('patients.documents')) },
   };
 }
 

@@ -1,6 +1,6 @@
 'use server';
 
-import { currentUser, requirePermission } from '@/core/rbac/guard';
+import { featureOn } from '@/core/features/features.server';import { currentUser, requirePermission } from '@/core/rbac/guard';
 import { queueService, type QueueTokenRow } from './queue.service';
 import { tenantDb, currentTenantId } from '@/core/db/context';
 
@@ -13,6 +13,7 @@ export async function getQueueAction(): Promise<{
 }> {
   const user = await currentUser();
   if (!user.branchId) return { tokens: [], nowServing: null, earlierAwaitingCollection: 0 };
+  if (!(await featureOn('lab.queue'))) return { tokens: [], nowServing: null, earlierAwaitingCollection: 0 };
   return queueService.list(user.branchId);
 }
 

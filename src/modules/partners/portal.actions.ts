@@ -8,6 +8,7 @@ import { listTests, type TestListItem } from '@/modules/catalog/catalog.service'
 import { receptionService, BookingEditError } from '@/modules/reception/reception.service';
 import type { ReportData } from '@/modules/reporting/report.types';
 import { partnersService } from './partners.service';
+import { notifyStaff } from '@/modules/notifications/notify';
 
 const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'];
 
@@ -114,7 +115,12 @@ export async function partnerBookAction(input: unknown): Promise<{ ok: true; sli
       } as Parameters<typeof receptionService.bookVisit>[0],
       { userId: user.id, branchId: user.branchId },
     );
-    const v = await (await tenantDb()).visit.findUnique({ where: { id: visitId }, select: { slipNo: true } });
+    const v = await (await tenantDb()).visit.findUnique({ where: { id: visitId }, select: { slipNo: true, partnerLab: { select: { name: true } } } });
+    await notifyStaff(
+      ['sample.collect', 'workflow.advance'],
+      { key: 'notify.b2bBooking', params: { partner: v?.partnerLab?.name ?? '', patient: d.fullName, slip: v?.slipNo ?? '' } },
+      { link: `/lab?q=${v?.slipNo ?? ''}`, kind: 'B2B_BOOKING' },
+    );
     return { ok: true, slipNo: v?.slipNo ?? '' };
   } catch (e) {
     return { ok: false, error: e instanceof BookingEditError ? e.message : 'The booking could not be made.' };

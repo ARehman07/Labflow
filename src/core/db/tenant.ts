@@ -73,6 +73,10 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'Analyzer',
   'AnalyzerMapping',
   'AnalyzerMessage',
+  'MessageTemplate',
+  'MessageLog',
+  'DocumentTemplate',
+  'PatientDocument',
 ]);
 
 /** Models deliberately NOT tenant-scoped, with the reason. */

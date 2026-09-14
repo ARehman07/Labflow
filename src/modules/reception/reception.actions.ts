@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requirePermission } from '@/core/rbac/guard';
 import { listTests, priceTests, type TestListItem } from '@/modules/catalog/catalog.service';
 import { receptionService, BookingEditError } from './reception.service';
+import { messagesService } from '@/modules/messages/messages.service';
 import { patientCreateSchema, bookVisitSchema } from './reception.schema';
 
 export interface PatientDTO {
@@ -103,6 +104,9 @@ export async function bookVisitAction(input: unknown): Promise<BookResult> {
       userId: user.id,
       branchId: user.branchId,
     });
+    await messagesService.notify('SLIP_BOOKED', visitId, {}, user.id);
+    // A sample arriving from a partner lab: tell that lab it was received.
+    if (parsed.data.partnerLabId) await messagesService.notify('B2B_RECEIVED', visitId, {}, user.id);
     return { ok: true, visitId };
   } catch (e) {
     if (e instanceof BookingEditError) return { ok: false, error: e.message };

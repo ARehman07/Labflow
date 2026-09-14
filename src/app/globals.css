@@ -275,6 +275,10 @@ body {
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-thumb { background: var(--color-line-strong); border-radius: 9999px; }
 *::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
+/* Opt out for strips that swipe sideways (the lab stage chips). Unlayered, like
+   the rule above, or that rule would win over a Tailwind utility. */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
 
 @layer components {
   /* ── One frame for every staff page ──────────────────────────────

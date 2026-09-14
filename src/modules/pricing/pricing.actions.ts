@@ -23,6 +23,8 @@ export interface RateGroupDTO {
   isActive: boolean;
   priceCount: number;
   usedBy: number;
+  /** Offered at the counter; off for a list only a B2B lab or collection point brings. */
+  atCounter: boolean;
 }
 export interface CollectionPointDTO {
   id: string;
@@ -77,6 +79,7 @@ export async function listRateGroupsAction(includeInactive = false): Promise<Rat
 const rateGroupSchema = z.object({
   name: z.string().trim().min(2, 'Enter the rate group name').max(60),
   defaultDiscountPct: z.coerce.number().min(0).max(100, 'A discount cannot be more than 100%').default(0),
+  atCounter: z.boolean().default(true),
 });
 
 export async function saveRateGroupAction(id: string | null, input: unknown): Promise<Res> {
@@ -146,5 +149,11 @@ export async function saveCollectionPointAction(id: string | null, input: unknow
 export async function setCollectionPointActiveAction(id: string, isActive: boolean): Promise<Res> {
   await requirePermission('admin.manage');
   await pricingService.setCollectionPointActive(id, isActive);
+  return { ok: true };
+}
+
+export async function setRateGroupCounterAction(id: string, atCounter: boolean): Promise<Res> {
+  await requirePermission('admin.manage');
+  await pricingService.setRateGroupCounter(id, atCounter === true);
   return { ok: true };
 }

@@ -1,3 +1,5 @@
+import { featureOn } from '@/core/features/features.server';
+import { FeatureOff } from '@/components/ui/FeatureOff';
 import { can } from '@/core/rbac/guard';
 import { AccessDenied } from '@/components/ui/AccessDenied';
 import { listPartnersAction } from '@/modules/partners/partners.actions';
@@ -7,6 +9,7 @@ import { PartnersClient } from './PartnersClient';
 export const dynamic = 'force-dynamic';
 
 export default async function PartnersPage() {
+  if (!(await featureOn('booking.b2b'))) return <FeatureOff />;
   const [manage, view] = await Promise.all([can('partner.manage'), can('finance.view')]);
   if (!manage && !view) return <AccessDenied area="finance" />;
   const [partners, groups] = await Promise.all([listPartnersAction(), listRateGroupsAction()]);

@@ -36,6 +36,10 @@ export const PERMISSIONS = {
     code: 'patient.manage', label: 'Manage patients & family cards', group: 'Reception',
     note: 'Includes issuing a family card and adding members to one.',
   },
+  DOCUMENT_MANAGE: {
+    code: 'document.manage', label: 'Patient forms & documents', group: 'Reception',
+    note: 'Make, print and scan consents, certificates and letters for patients.',
+  },
 
   // ── Laboratory ──
   SAMPLE_COLLECT: { code: 'sample.collect', label: 'Collect samples', group: 'Laboratory' },
@@ -47,6 +51,11 @@ export const PERMISSIONS = {
   WORKFLOW_ADVANCE: { code: 'workflow.advance', label: 'Advance workflow & queue', group: 'Laboratory' },
   CRITICAL_MANAGE: { code: 'critical.manage', label: 'Handle critical-result callbacks', group: 'Laboratory' },
   NOTIFIABLE_MANAGE: { code: 'notifiable.manage', label: 'Handle notifiable disease reports', group: 'Laboratory' },
+  QC_MANAGE: {
+    code: 'qc.manage', label: 'Set up quality control', group: 'Laboratory',
+    note: 'Control materials and their target values. Recording a QC run only needs Enter results.',
+  },
+  STOCK_MANAGE: { code: 'stock.manage', label: 'Manage lab stock', group: 'Laboratory' },
 
   // ── Money ──
   BILLING_VIEW: {
@@ -115,16 +124,16 @@ export const DEFAULT_ROLES: Record<string, PermissionCode[]> = {
 
   /** Runs the lab day to day. Everything operational; no policy, no accounts. */
   Manager: [
-    'visit.create', 'visit.modify', 'visit.cancel', 'patient.manage',
+    'visit.create', 'visit.modify', 'visit.cancel', 'patient.manage', 'document.manage',
     'sample.collect', 'result.enter', 'result.approve', 'workflow.advance',
-    'critical.manage', 'notifiable.manage',
+    'critical.manage', 'notifiable.manage', 'qc.manage', 'stock.manage',
     'billing.view', 'payment.receive', 'finance.view', 'partner.manage',
     'report.print', 'report.deliver', 'insights.view',
   ],
 
   /** The counter and the bench. Cannot release results, refund, or see accounts. */
   Staff: [
-    'visit.create', 'visit.modify', 'patient.manage',
+    'visit.create', 'visit.modify', 'patient.manage', 'document.manage',
     'sample.collect', 'result.enter', 'workflow.advance',
     'billing.view', 'payment.receive',
     'report.print',
@@ -152,7 +161,7 @@ export const ROLE_PRESETS: RolePreset[] = [
     name: 'Receptionist',
     description: 'Front desk: bookings, patients, family cards, taking payment.',
     permissions: [
-      'visit.create', 'visit.modify', 'visit.cancel', 'patient.manage',
+      'visit.create', 'visit.modify', 'visit.cancel', 'patient.manage', 'document.manage',
       'billing.view', 'payment.receive', 'workflow.advance', 'report.print',
     ],
   },

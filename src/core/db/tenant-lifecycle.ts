@@ -18,6 +18,10 @@ import { unscopedPrisma as prisma } from './tenant';
 
 /** Child-to-parent. Order matters; do not sort this list. */
 const DELETION_ORDER = [
+  'patientDocument',
+  'documentTemplate',
+  'messageLog',
+  'messageTemplate',
   'analyzerMessage',
   'analyzerMapping',
   'analyzer',

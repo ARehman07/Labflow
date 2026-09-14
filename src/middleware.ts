@@ -21,7 +21,9 @@ export default auth((req) => {
   const isPublic =
     pathname.startsWith('/login') ||
     pathname.startsWith('/portal') ||
-    pathname.startsWith('/api/auth');
+    pathname.startsWith('/api/auth') ||
+    // Analyzers authenticate with their own API key, checked in the route.
+    pathname.startsWith('/api/analyzer');
 
   if (!isLoggedIn && !isPublic) {
     const url = new URL('/login', req.nextUrl.origin);

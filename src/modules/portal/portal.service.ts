@@ -1,5 +1,7 @@
+import { parseFeatures } from '@/core/features/catalog';
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { sendSms, smsConfigured } from '@/lib/messaging';
 // The patient portal is unauthenticated: there is no session to read a tenant
 // from. The lab is identified explicitly by its code, because a mobile number
 // is NOT unique across labs — two tenants can hold the same number, and
@@ -49,7 +51,7 @@ function fmtDate(d: Date) {
 async function resolveTenant(labCode: string) {
   return prisma.tenant.findUnique({
     where: { code: labCode.trim().toLowerCase() },
-    select: { id: true, isActive: true },
+    select: { id: true, isActive: true, name: true, features: true },
   });
 }
 
@@ -70,6 +72,7 @@ export const portalService = {
 
     const tenant = await resolveTenant(labCode);
     if (!tenant || !tenant.isActive) return { ok: true }; // do not confirm lab codes either
+    if (!parseFeatures(tenant.features)['patients.portal']) return { ok: false, error: 'Online reports are not available for this lab.' };
 
     const patient = await prisma.patient.findFirst({
       where: { tenantId: tenant.id, mobile },
@@ -115,7 +118,21 @@ export const portalService = {
       },
     });
 
-    // TODO: hand `code` to an SMS provider here.
+    // With an SMS gateway set up the code goes to the patient's phone; the
+    // development shortcut below still applies only outside production.
+    if (smsConfigured()) {
+      const text = `${tenant.name ?? 'Lab'} report code: ${code}. It expires in ${Math.round(OTP_TTL_MS / 60000)} minutes.`;
+      // Logged like every other message, with the code itself blanked out.
+      const logged = { tenantId: tenant.id, channel: 'SMS' as const, event: 'PORTAL_CODE', to: mobile, body: text.replace(code, '••••••') };
+      try {
+        await sendSms(mobile, text);
+        await prisma.messageLog.create({ data: { ...logged, status: 'SENT' } }).catch(() => {});
+      } catch (e) {
+        console.error('[portal] OTP SMS failed', e);
+        await prisma.messageLog.create({ data: { ...logged, status: 'FAILED', error: e instanceof Error ? e.message.slice(0, 300) : null } }).catch(() => {});
+        return { ok: false, error: 'The code could not be sent. Try again shortly.' };
+      }
+    }
     return exposeDevOtp() ? { ok: true, devCode: code } : { ok: true };
   },
 

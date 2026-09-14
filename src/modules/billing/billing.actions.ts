@@ -1,8 +1,11 @@
 'use server';
 
-import { requirePermission } from '@/core/rbac/guard';
+import { requirePermission, can } from '@/core/rbac/guard';
 import { billingService } from './billing.service';
-import { recordPaymentSchema, refundSchema } from './billing.schema';
+import { tenantDb } from '@/core/db/context';
+import { messagesService } from '@/modules/messages/messages.service';
+import { money } from '@/modules/messages/templates';
+import { recordPaymentSchema, refundSchema, reversePaymentSchema } from './billing.schema';
 
 const fmtDate = (d: Date) =>
   new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(d);
@@ -91,8 +94,9 @@ export interface InvoiceDetailDTO {
   /** Paid beyond the bill — after tests were removed or the booking cancelled. */
   refundDue: number;
   status: string;
-  payments: { amount: number; method: string; date: string }[];
-  refunds: { amount: number; reason: string | null; date: string }[];
+  /** A negative amount is a payment taken back (dues marked pending); `note` says why. */
+  payments: { id: string; amount: number; method: string; date: string; note: string | null }[];
+  refunds: { id: string; amount: number; reason: string | null; date: string }[];
 }
 
 export async function getInvoiceDetailAction(invoiceId: string): Promise<InvoiceDetailDTO | null> {
@@ -121,13 +125,13 @@ export async function getInvoiceDetailAction(invoiceId: string): Promise<Invoice
     balance: Math.max(0, net - paid),
       refundDue: Math.max(0, paid - net),
     status: inv.status,
-    payments: inv.payments.map((p) => ({ amount: Number(p.amount), method: p.method, date: fmtDate(p.at) })),
-    refunds: inv.refunds.map((r) => ({ amount: Number(r.amount), reason: r.reason, date: fmtDate(r.at) })),
+    payments: inv.payments.map((p) => ({ id: p.id, amount: Number(p.amount), method: p.method, date: fmtDate(p.at), note: p.note })),
+    refunds: inv.refunds.map((r) => ({ id: r.id, amount: Number(r.amount), reason: r.reason, date: fmtDate(r.at) })),
   };
 }
 
 export type BillingActionResult =
-  | { ok: true; status: string; paid: number }
+  | { ok: true; status: string; paid: number; txId?: string }
   | { ok: false; error: string };
 
 export async function recordPaymentAction(input: unknown): Promise<BillingActionResult> {
@@ -136,7 +140,8 @@ export async function recordPaymentAction(input: unknown): Promise<BillingAction
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid payment' };
   try {
     const res = await billingService.recordPayment(parsed.data, user.id);
-    return { ok: true, status: res.status, paid: res.paid };
+    await tellPatient('payment', res.txId, user.id);
+    return { ok: true, status: res.status, paid: res.paid, txId: res.txId };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Payment failed' };
   }
@@ -147,9 +152,39 @@ export async function issueRefundAction(input: unknown): Promise<BillingActionRe
   const parsed = refundSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid refund' };
   try {
-    const res = await billingService.issueRefund(parsed.data, user.id);
-    return { ok: true, status: res.status, paid: res.paid };
+    const res = await billingService.issueRefund(parsed.data, user.id, { overrideWindow: await can('settings.manage') });
+    await tellPatient('refund', res.txId, user.id);
+    return { ok: true, status: res.status, paid: res.paid, txId: res.txId };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Refund failed' };
   }
+}
+
+export async function reversePaymentAction(input: unknown): Promise<BillingActionResult> {
+  const user = await requirePermission('refund.issue');
+  const parsed = reversePaymentSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid entry' };
+  try {
+    const res = await billingService.reversePayment(parsed.data, user.id);
+    return { ok: true, status: res.status, paid: res.paid, txId: res.txId };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Could not mark as due' };
+  }
+}
+
+/** The patient's SMS for money received or refunded, when the lab has it switched on. */
+async function tellPatient(kind: 'payment' | 'refund', txId: string, userId: string) {
+  const db = await tenantDb();
+  const select = { amount: true, invoice: { select: { visitId: true, netAmount: true, paidAmount: true } } } as const;
+  const row = kind === 'payment'
+    ? await db.payment.findUnique({ where: { id: txId }, select })
+    : await db.refund.findUnique({ where: { id: txId }, select });
+  if (!row) return;
+  const due = Math.max(0, Number(row.invoice.netAmount) - Number(row.invoice.paidAmount));
+  await messagesService.notify(
+    kind === 'payment' ? 'PAYMENT_RECEIVED' : 'REFUND_ISSUED',
+    row.invoice.visitId,
+    { amount: money(Number(row.amount)), due: money(due) },
+    userId,
+  );
 }

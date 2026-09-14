@@ -1,4 +1,16 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { auth } from '@/core/auth/auth';
+
+/**
+ * Work done without a signed-in person — an analyzer posting results — runs
+ * inside `runAsTenant`, which supplies the lab those queries belong to. Only
+ * code that has already authenticated the caller another way may use it.
+ */
+const tenantOverride = new AsyncLocalStorage<{ tenantId: string }>();
+
+export function runAsTenant<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+  return tenantOverride.run({ tenantId }, fn);
+}
 import { forTenant, MissingTenantError, type TenantClient } from './tenant';
 
 /**
@@ -16,6 +28,8 @@ export async function tenantDb(): Promise<TenantClient> {
 
 /** The signed-in user's tenant id. Throws if there is no session. */
 export async function currentTenantId(): Promise<string> {
+  const override = tenantOverride.getStore();
+  if (override) return override.tenantId;
   const session = await auth();
   const tenantId = session?.user?.tenantId;
   if (!tenantId) throw new MissingTenantError();

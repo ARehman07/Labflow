@@ -3,7 +3,13 @@ import { parseScan } from '@/lib/scan';
 
 export const labRepository = {
   /** Order lines for the branch within a date window, grouped by visit. */
-  async workboard(branchId: string, from: Date, to: Date, query?: string) {
+  async workboard(
+    branchId: string,
+    from: Date,
+    to: Date,
+    query?: string,
+    filters: { departmentId?: string; testStatus?: string; partnerLabId?: string } = {},
+  ) {
     const q = query?.trim();
     // A scanned tube label or slip QR finds its visit too, not only typed text.
     // A whole code (barcode, QR, or a five-digit slip number as printed) means
@@ -18,6 +24,14 @@ export const labRepository = {
         // A cancelled booking has nothing left for the bench to do.
         status: { not: 'CANCELLED' },
         bookedAt: { gte: from, lte: to },
+        // Filters narrow which patients show; each card still carries all its tests.
+        AND: [
+          ...(filters.departmentId ? [{ orderLines: { some: { test: { departmentId: filters.departmentId } } } }] : []),
+          ...(filters.testStatus ? [{ orderLines: { some: { status: filters.testStatus as never } } }] : []),
+          ...(filters.partnerLabId === 'ANY' ? [{ partnerLabId: { not: null } }]
+            : filters.partnerLabId === 'NONE' ? [{ partnerLabId: null }]
+            : filters.partnerLabId ? [{ partnerLabId: filters.partnerLabId }] : []),
+        ],
         ...(exact && scan
           ? {
               OR: [
@@ -47,7 +61,7 @@ export const labRepository = {
         },
       },
       orderBy: { bookedAt: 'desc' },
-      take: 60,
+      take: 150,
     });
   },
 
