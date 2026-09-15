@@ -116,6 +116,8 @@ const steps = [
   ['npx', ['prisma', 'generate'], runtime.value],
   ['npx', ['prisma', 'migrate', 'deploy'], migrate.value],
   ['npx', ['tsx', 'scripts/sync-permissions.ts'], migrate.value],
+  // Analyte codes are data too: blanks are filled from parameter names, set codes are never touched.
+  ['npx', ['tsx', 'scripts/sync-analytes.ts'], migrate.value],
   ['npx', ['next', 'build'], runtime.value],
 ];
 

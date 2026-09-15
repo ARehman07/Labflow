@@ -19,6 +19,7 @@
     "db:studio": "prisma studio",
     "db:sqlite": "node scripts/gen-sqlite-schema.mjs",
     "db:sync-perms": "tsx scripts/sync-permissions.ts",
+    "db:sync-analytes": "tsx scripts/sync-analytes.ts",
     "db:demo": "tsx scripts/reset-demo.ts"
   },
   "prisma": {
