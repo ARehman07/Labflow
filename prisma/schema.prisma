@@ -244,6 +244,8 @@ model Tenant {
   reportHistoryColumns      Int     @default(3)
   /// Whether reports open with earlier results already shown.
   reportHistoryByDefault    Boolean @default(false)
+  /// How far back report history looks, in months. 0 means no limit.
+  reportHistoryMonths       Int     @default(24)
 
   // ── Letterhead. What a patient sees on paper is the lab, not the software.
   /// Logo as a data URL. Held inline rather than in object storage: a lab logo
@@ -273,6 +275,21 @@ model Tenant {
   /// Which parts of LabFlow this lab uses, as JSON of switch → on/off. A switch
   /// missing here is on. See core/features/catalog.
   features String @default("{}")
+
+  // ── Subscription, set from the platform console. The lab sees it and cannot change it.
+  planName       String?
+  monthlyFee     Decimal   @default(0) @db.Decimal(10, 2)
+  /// Paid through the end of this day. Empty means billing is not set up, and access is not limited.
+  paidUntil      DateTime?
+  /// Days after paidUntil before the lab turns read-only.
+  graceDays      Int       @default(7)
+  /// Most active staff accounts the plan allows. Empty means no limit.
+  maxUsers       Int?
+  /// NONE follows payment; ACTIVE keeps the lab open (until overrideUntil, if set); READ_ONLY restricts it now.
+  accessOverride String    @default("NONE")
+  overrideUntil  DateTime?
+  /// Features the plan leaves out, as a JSON array of feature keys. The owner cannot switch them on.
+  lockedFeatures String    @default("[]")
 
   branches              Branch[]
   roles                 Role[]
@@ -333,6 +350,7 @@ model Tenant {
   messageLogs           MessageLog[]
   documentTemplates     DocumentTemplate[]
   patientDocuments      PatientDocument[]
+  labPayments           LabPayment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -612,6 +630,10 @@ model TestParameter {
   cutoff        Decimal?       @db.Decimal(12, 4)
   positiveLabel String?
   negativeLabel String?
+  /// The measurement itself, shared by every test that reports it — TCHOL in
+  /// "Cholesterol" and in "Lipid Profile" — so a patient's report history
+  /// follows the analyte, not the test it happened to be booked under.
+  analyteCode   String?
 
   referenceRanges  ReferenceRange[]
   formula          ParameterFormula?
@@ -621,6 +643,7 @@ model TestParameter {
 
   @@unique([testId, code])
   @@index([tenantId])
+  @@index([tenantId, analyteCode])
 }
 
 model ReferenceRange {
@@ -1671,4 +1694,42 @@ model PatientDocument {
   @@unique([tenantId, docNo])
   @@index([tenantId])
   @@index([patientId])
+}
+
+/// What the platform team did to a lab: created it, suspended or reactivated
+/// it, reset an owner's password, removed it. Deliberately not tied to a lab —
+/// the record of a removal has to survive the removal.
+model PlatformEvent {
+  id      String   @id @default(cuid())
+  at      DateTime @default(now())
+  /// The platform admin's username from PLATFORM_ADMINS.
+  admin   String
+  /// CREATE, SUSPEND, REACTIVATE, RESET_OWNER or REMOVE
+  action  String
+  labId   String?
+  labCode String
+  detail  String?
+
+  @@index([labId])
+  @@index([at])
+}
+
+/// A payment a lab made for its LabFlow subscription, recorded from the platform
+/// console. Each one moves the lab's paidUntil forward by `months`.
+model LabPayment {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  amount     Decimal  @db.Decimal(10, 2)
+  months     Int
+  periodFrom DateTime
+  periodTo   DateTime
+  method     String?
+  reference  String?
+  note       String?
+  /// The platform admin who recorded it.
+  recordedBy String
+  paidAt     DateTime @default(now())
+
+  @@index([tenantId])
 }

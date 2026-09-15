@@ -24,10 +24,14 @@ export function AttachmentsPanel({ visitId, canAttach, canDelete }: { visitId: s
   const { t } = useI18n();
   const toast = useToast();
   const [files, setFiles] = useState<AttachmentDTO[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [uploading, setUploading] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
-  const load = () => listAttachmentsAction(visitId).then(setFiles).catch(() => setFiles([]));
+  const load = () => listAttachmentsAction(visitId)
+    .then(setFiles)
+    .catch(() => setFiles([]))
+    .finally(() => setLoaded(true));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load(); }, [visitId]);
 
@@ -53,6 +57,10 @@ export function AttachmentsPanel({ visitId, canAttach, canDelete }: { visitId: s
     else toast('error', res.error);
   }
 
+  // Someone who cannot attach only sees the panel when the visit has files, and
+  // that is unknown until the list arrives. Most visits have none, so holding
+  // space for everyone would leave a blank gap above the slip; the rare visit
+  // with files takes the late insert instead.
   if (!canAttach && files.length === 0) return null;
 
   return (
@@ -79,8 +87,18 @@ export function AttachmentsPanel({ visitId, canAttach, canDelete }: { visitId: s
         )}
       </div>
       {canAttach && <p className="mt-1 text-xs text-subtle">{t('attach.hint')}</p>}
-      {files.length === 0 ? (
-        <p className="mt-2 text-sm text-muted">{t('attach.none')}</p>
+      {/* Loading, empty and a single file all take one row of the same box,
+          so the usual visit does not change height when the list arrives. */}
+      {!loaded ? (
+        <div className="mt-2 flex items-center gap-3 rounded-xl border border-line px-3 py-2" aria-busy>
+          <div className="skeleton h-4 w-4 shrink-0" />
+          <div className="skeleton h-4 w-1/2" />
+          <span className="h-5" aria-hidden />
+        </div>
+      ) : files.length === 0 ? (
+        <div className="mt-2 flex items-center rounded-xl border border-line px-3 py-2">
+          <p className="text-sm text-muted">{t('attach.none')}</p>
+        </div>
       ) : (
         <ul className="mt-2 divide-y divide-line rounded-xl border border-line">
           {files.map((f) => {

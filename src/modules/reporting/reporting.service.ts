@@ -2,6 +2,7 @@ import { tenantDb } from '@/core/db/context';
 import { forTenant } from '@/core/db/tenant';
 import { pickRange, ageInDays, interpretCutoff, type ReferenceRangeDef, type AgeUnit } from '@/modules/lab/calc-engine';
 import type { ReportData, ReportTest } from './report.types';
+import { analyteKey, historyCutoff, pickHistory, sameUnit, type EarlierRow } from './history';
 
 const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'] as const;
 
@@ -13,34 +14,6 @@ const num = (v: string | null | undefined) => {
   const n = Number(String(v).replace(/,/g, '').trim());
   return String(v).trim() !== '' && Number.isFinite(n) ? n : null;
 };
-
-/**
- * Earlier results for the same tests, found through the patient's record — the
- * MR number is what ties a returning patient's visits together.
- *
- * A doctor reading HbA1c 7.9 reads it differently when the last three were
- * 9.1, 8.6 and 8.2. Only released results count, only visits booked before this
- * one, and only the last few, so the page stays an A4 report and not a ledger.
- */
-function historyFor(
-  line: { testId: string; test: { parameters: { id: string }[] } },
-  rows: { parameterId: string; value: string | null; flag: string; orderLine: { testId: string; visit: { id: string; slipNo: string; bookedAt: Date } } }[],
-  fmtDate: (d: Date) => string,
-  limit: number = HISTORY_COLUMNS,
-) {
-  const own = new Set(line.test.parameters.map((p) => p.id));
-  const mine = rows.filter((r) => own.has(r.parameterId));
-  const columns: { visitId: string; slipNo: string; date: string }[] = [];
-  const seen = new Set<string>();
-  for (const r of mine) {
-    if (seen.has(r.orderLine.visit.id)) continue;
-    seen.add(r.orderLine.visit.id);
-    columns.push({ visitId: r.orderLine.visit.id, slipNo: r.orderLine.visit.slipNo, date: fmtDate(r.orderLine.visit.bookedAt) });
-    if (columns.length === limit) break;
-  }
-  const cell = new Map(mine.map((r) => [`${r.orderLine.visit.id}:${r.parameterId}`, r]));
-  return { columns, cell };
-}
 
 function referenceText(
   ranges: ReferenceRangeDef[],
@@ -87,7 +60,7 @@ export async function getReportData(
         select: {
           name: true, tagline: true, logoDataUrl: true,
           licenseNo: true, email: true, reportFooterNote: true,
-          reportHistoryColumns: true, reportHistoryByDefault: true,
+          reportHistoryColumns: true, reportHistoryByDefault: true, reportHistoryMonths: true,
           reportShowHeader: true, reportShowFooter: true, reportTopMarginMm: true,
           reportBottomMarginMm: true, reportFont: true, reportFontScale: true,
         },
@@ -115,29 +88,53 @@ export async function getReportData(
 
   const shortDate = (d: Date) =>
     new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }).format(d);
-  const paramIds = visit.orderLines.flatMap((l) => l.test.parameters.map((p) => p.id));
-  const earlier = paramIds.length === 0 ? [] : await db.resultValue.findMany({
+  // Earlier results for the same analytes, through the patient's record — the
+  // MR number ties a returning patient's visits together. Only released
+  // results, only visits booked before this one and within the lab's window,
+  // so the page stays an A4 report and not a ledger. See ./history.
+  const allParams = visit.orderLines.flatMap((l) => l.test.parameters);
+  const codes = [...new Set(allParams.map((p) => p.analyteCode?.trim().toUpperCase()).filter((c): c is string => !!c))];
+  const plainIds = allParams.filter((p) => !p.analyteCode?.trim()).map((p) => p.id);
+  const since = historyCutoff(visit.bookedAt, visit.tenant.reportHistoryMonths);
+  const earlierRows = allParams.length === 0 ? [] : await db.resultValue.findMany({
     where: {
-      parameterId: { in: paramIds },
+      OR: [
+        ...(plainIds.length > 0 ? [{ parameterId: { in: plainIds } }] : []),
+        ...(codes.length > 0 ? [{ parameter: { analyteCode: { in: codes } } }] : []),
+      ],
       value: { not: null },
       orderLine: {
         status: { in: [...RELEASED] },
         visitId: { not: visit.id },
-        visit: { patientId: visit.patientId, bookedAt: { lt: visit.bookedAt }, status: { not: 'CANCELLED' } },
+        visit: {
+          patientId: visit.patientId,
+          bookedAt: { lt: visit.bookedAt, ...(since ? { gte: since } : {}) },
+          status: { not: 'CANCELLED' },
+        },
       },
     },
     select: {
-      parameterId: true, value: true, flag: true,
-      orderLine: { select: { testId: true, visit: { select: { id: true, slipNo: true, bookedAt: true } } } },
+      value: true, flag: true,
+      parameter: { select: { id: true, analyteCode: true, unit: true } },
+      orderLine: { select: { visit: { select: { id: true, slipNo: true, bookedAt: true } } } },
     },
     orderBy: { orderLine: { visit: { bookedAt: 'desc' } } },
     take: 3000,
   });
+  const earlier: EarlierRow[] = earlierRows.map((r) => ({
+    key: analyteKey(r.parameter), value: r.value, flag: r.flag, unit: r.parameter.unit, visit: r.orderLine.visit,
+  }));
 
   let reportedAt: Date | null = null;
   const tests: ReportTest[] = visit.orderLines.map((line) => {
-    const { columns, cell } = historyFor(line, earlier, shortDate, visit.tenant.reportHistoryColumns);
     const resultByParam = new Map(line.results.map((r) => [r.parameterId, r]));
+    // History columns come only from what this report prints, so none is empty.
+    const printedKeys = line.test.parameters
+      .filter((p) => { const v = resultByParam.get(p.id)?.value; return v != null && String(v).trim() !== ''; })
+      .map(analyteKey);
+    const picked = pickHistory(printedKeys, earlier, visit.tenant.reportHistoryColumns);
+    const cell = picked.cell;
+    const columns = picked.columns.map((c) => ({ visitId: c.visitId, slipNo: c.slipNo, date: shortDate(c.bookedAt) }));
     for (const r of line.results) {
       if (r.approvedAt && (!reportedAt || r.approvedAt > reportedAt)) reportedAt = r.approvedAt;
     }
@@ -161,12 +158,18 @@ export async function getReportData(
         : null,
       params: line.test.parameters.map((p) => {
         const r = resultByParam.get(p.id);
-        const prevRows = columns.map((c) => cell.get(`${c.visitId}:${p.id}`) ?? null);
+        const key = analyteKey(p);
+        const prevRows = columns.map((c) => cell.get(`${c.visitId}:${key}`) ?? null);
         const now = num(r?.value);
-        const last = prevRows.map((x) => num(x?.value)).find((x) => x != null) ?? null;
+        // The arrow only compares like with like: a value in another unit is shown, not ranked.
+        const last = prevRows
+          .filter((x) => x != null && sameUnit(x.unit, p.unit))
+          .map((x) => num(x?.value))
+          .find((x) => x != null) ?? null;
         return {
           previous: prevRows.map((x) => x?.value ?? null),
           previousFlags: prevRows.map((x) => x?.flag ?? null),
+          previousUnits: prevRows.map((x) => (x != null && !sameUnit(x.unit, p.unit) ? (x.unit ?? '') : null)),
           trend: now == null || last == null ? null : now > last ? 'UP' : now < last ? 'DOWN' : 'SAME',
           name: p.name,
           value: r?.value ?? null,

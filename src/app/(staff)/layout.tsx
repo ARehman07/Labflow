@@ -8,10 +8,17 @@ import { NavProgress } from '@/components/layout/NavProgress';
 import { MobileNav } from '@/components/layout/MobileNav';
 import { FeaturesProvider } from '@/core/features/FeaturesProvider';
 import { getFeatures } from '@/core/features/features.server';
+import { labAccessFor } from '@/core/billing/access.server';
+import { effectivePermissions } from '@/core/billing/access';
+import { AccessBanner } from '@/components/layout/AccessBanner';
 
 export default async function StaffLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
+
+  // A suspended lab is shut out at once, not when sessions expire; a lapsed one keeps read-only access.
+  const access = await labAccessFor(session.user.tenantId);
+  if (access.level === 'SUSPENDED') redirect('/suspended');
 
   // An owner-issued password is a handover, not a credential. Nothing else in
   // the app is reachable until the person has chosen their own.
@@ -21,7 +28,9 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   if (session.user.partnerLabId) redirect('/partner');
   if (session.user.doctorId) redirect('/doctor');
 
-  const { name, role, branchName, permissions } = session.user;
+  const { name, role, branchName } = session.user;
+  // The menu offers only what the lab's access allows today.
+  const permissions = effectivePermissions(access.level, session.user.permissions ?? []);
   const features = await getFeatures();
 
   return (
@@ -34,7 +43,10 @@ export default async function StaffLayout({ children }: { children: React.ReactN
         <Sidebar permissions={permissions ?? []} />
         {/* Bottom padding on phones keeps the last row clear of the tab bar. */}
         <main className="min-w-0 flex-1 px-4 pb-28 pt-6 sm:px-6 md:pb-6 lg:px-8">
-          <div key="page" className="page-shell animate-fade-in-up">{children}</div>
+          <div key="page" className="page-shell animate-fade-in-up">
+            <AccessBanner level={access.level} restrictsOn={access.restrictsOn?.toISOString() ?? null} isOwner={(session.user.permissions ?? []).includes('settings.manage')} />
+            {children}
+          </div>
         </main>
       </div>
       <MobileNav permissions={permissions ?? []} userName={name ?? 'User'} role={role} />

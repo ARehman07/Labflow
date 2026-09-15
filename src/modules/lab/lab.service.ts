@@ -1,6 +1,7 @@
 import { getFeatures } from '@/core/features/features.server';
 import { randomBytes } from 'crypto';
 import { tenantDb, currentTenantId } from '@/core/db/context';
+import { analyteKey, historyCutoff } from '@/modules/reporting/history';
 import { openCriticalNotifications } from './critical';
 import type { TenantTransactionClient } from '@/core/db/tenant';
 import { labRepository } from './lab.repository';
@@ -170,22 +171,45 @@ export const labService = {
   },
 
   /** Everything a tube label needs for one visit. */
+  /**
+   * The tube labels for a visit — printable straight after booking.
+   *
+   * The counter labels the tubes before the sample is drawn, so a tube not yet
+   * collected still gets its label: one per specimen type, carrying the same
+   * barcode collection will give that tube (slip-specimen-visit, see transition).
+   * Tubes already collected, retakes included, come from their Sample rows.
+   */
   async getLabels(visitId: string) {
-    return (await tenantDb()).visit.findUnique({
+    const visit = await (await tenantDb()).visit.findUnique({
       where: { id: visitId },
       select: {
+        id: true,
         slipNo: true,
-        bookedAt: true,
         patient: { select: { fullName: true, mrNo: true, age: true, sex: true } },
         samples: {
           orderBy: { collectedAt: 'asc' },
-          select: {
-            id: true, barcode: true, specimenType: true, collectedAt: true,
-            orderLines: { select: { test: { select: { name: true } } } },
-          },
+          select: { id: true, barcode: true, specimenType: true, collectedAt: true, orderLines: { select: { test: { select: { name: true } } } } },
+        },
+        orderLines: {
+          where: { status: { not: 'CANCELLED' }, sampleId: null },
+          orderBy: { createdAt: 'asc' },
+          select: { test: { select: { name: true, specimenType: true } } },
         },
       },
     });
+    if (!visit) return null;
+    const tubes = visit.samples.map((s) => ({
+      id: s.id, barcode: s.barcode, specimenType: s.specimenType as string, collectedAt: s.collectedAt, tests: s.orderLines.map((l) => l.test.name),
+    }));
+    const pending = new Map<string, string[]>();
+    for (const l of visit.orderLines) pending.set(l.test.specimenType, [...(pending.get(l.test.specimenType) ?? []), l.test.name]);
+    for (const [spec, tests] of pending) {
+      const barcode = `${visit.slipNo}-${SPECIMEN_CODE[spec] ?? 'OTH'}-${visit.id.slice(-4).toUpperCase()}`;
+      const existing = tubes.find((t) => t.barcode === barcode);
+      if (existing) existing.tests = [...new Set([...existing.tests, ...tests])];
+      else tubes.push({ id: `planned-${spec}`, barcode, specimenType: spec, collectedAt: null, tests });
+    }
+    return { slipNo: visit.slipNo, patient: visit.patient, tubes };
   },
 
   /**
@@ -193,27 +217,52 @@ export const labService = {
    * earlier test. A technician reading 5.4 today reads it differently when the
    * last result was 5.3 than when it was 9.8 — the change is what matters.
    */
-  async previousResults(patientId: string, excludeOrderLineId: string, parameterIds: string[]) {
-    const rows = await (await tenantDb()).resultValue.findMany({
+  async previousResults(
+    patientId: string,
+    excludeVisitId: string,
+    params: { id: string; analyteCode: string | null }[],
+  ) {
+    const out = new Map<string, { value: string; flag: string; at: string; unit: string | null }>();
+    if (params.length === 0) return out;
+    const db = await tenantDb();
+    // Matched by analyte like the report's history, and within the same window,
+    // so the bench and the printed report never disagree about "last result".
+    const codes = [...new Set(params.map((p) => p.analyteCode?.trim().toUpperCase()).filter((c): c is string => !!c))];
+    const plainIds = params.filter((p) => !p.analyteCode?.trim()).map((p) => p.id);
+    const tenant = await db.tenant.findUniqueOrThrow({
+      where: { id: await currentTenantId() },
+      select: { reportHistoryMonths: true },
+    });
+    const since = historyCutoff(new Date(), tenant.reportHistoryMonths);
+    const rows = await db.resultValue.findMany({
       where: {
-        parameterId: { in: parameterIds },
+        OR: [
+          ...(plainIds.length > 0 ? [{ parameterId: { in: plainIds } }] : []),
+          ...(codes.length > 0 ? [{ parameter: { analyteCode: { in: codes } } }] : []),
+        ],
         value: { not: null },
         orderLine: {
-          id: { not: excludeOrderLineId },
+          visitId: { not: excludeVisitId },
           status: { in: ['APPROVED', 'PRINTED', 'DELIVERED'] },
-          visit: { patientId },
+          visit: { patientId, status: { not: 'CANCELLED' }, ...(since ? { bookedAt: { gte: since } } : {}) },
         },
       },
-      orderBy: { updatedAt: 'desc' },
-      select: { parameterId: true, value: true, flag: true, updatedAt: true },
+      orderBy: { orderLine: { visit: { bookedAt: 'desc' } } },
+      select: { value: true, flag: true, updatedAt: true, parameter: { select: { id: true, analyteCode: true, unit: true } } },
+      take: 500,
     });
-    const latest = new Map<string, { value: string; flag: string; at: string }>();
+    const latest = new Map<string, { value: string; flag: string; at: string; unit: string | null }>();
     for (const r of rows) {
-      if (!latest.has(r.parameterId) && r.value != null) {
-        latest.set(r.parameterId, { value: r.value, flag: r.flag, at: r.updatedAt.toISOString() });
+      const key = analyteKey(r.parameter);
+      if (!latest.has(key) && r.value != null) {
+        latest.set(key, { value: r.value, flag: r.flag, at: r.updatedAt.toISOString(), unit: r.parameter.unit });
       }
     }
-    return latest;
+    for (const p of params) {
+      const hit = latest.get(analyteKey(p));
+      if (hit) out.set(p.id, hit);
+    }
+    return out;
   },
 
   getApprovals: async (branchId: string) => labRepository.approvalsQueue(branchId),
@@ -613,11 +662,13 @@ export const labService = {
    * Separation of duties: the user who saved a result may not release it. This
    * used to carry an escape hatch for the Admin role, which meant the one
    * account most likely to do everything alone could sign off its own work.
-   * The exception is now a per-lab setting (`Tenant.allowSelfVerify`), off by
-   * default, so bypassing it is a deliberate act by the superadmin rather than
-   * a side effect of holding a role.
+   * The exception is a per-lab setting (`Tenant.allowSelfVerify`), off by
+   * default. Whoever sets lab policy (`ownerOverride`) is not held by it either:
+   * they could switch the setting on anyway, so blocking them only sent the
+   * owner hunting for a second login. Their self-approval is written into the
+   * test's history so it stays visible.
    */
-  async approve(orderLineId: string, approver: { id: string; role: string }) {
+  async approve(orderLineId: string, approver: { id: string; role: string }, opts: { ownerOverride?: boolean } = {}) {
     const line = await (await tenantDb()).orderLine.findUnique({
       where: { id: orderLineId },
       include: {
@@ -653,13 +704,13 @@ export const labService = {
     // A culture has no result values; whoever last saved it is who entered it.
     const enteredByThisUser = line.results.some((r) => r.enteredById === approver.id)
       || (isCulture && line.workflowEvents[0]?.actorId === approver.id);
-    if (enteredByThisUser) {
+    if (enteredByThisUser && !opts.ownerOverride) {
       const tenant = await (await tenantDb()).tenant.findUniqueOrThrow({
         where: { id: await currentTenantId() },
         select: { allowSelfVerify: true },
       });
       if (!tenant.allowSelfVerify) {
-        throw new Error('Separation of duties: you cannot approve results you entered.');
+        throw new Error('Separation of duties: you cannot approve results you entered. Ask the lab owner, or someone else who can approve.');
       }
     }
 
@@ -669,7 +720,7 @@ export const labService = {
         where: { orderLineId },
         data: { approvedById: approver.id, approvedAt: new Date() },
       });
-      await logEvent(tx, orderLineId, from, 'APPROVED', approver.id, 'Approved');
+      await logEvent(tx, orderLineId, from, 'APPROVED', approver.id, enteredByThisUser ? 'Approved own entry' : 'Approved');
     });
   },
 

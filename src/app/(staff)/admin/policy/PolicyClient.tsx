@@ -40,6 +40,7 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
         refundWindowHours: p.refundWindowHours,
         reportHistoryColumns: p.reportHistoryColumns,
         reportHistoryByDefault: p.reportHistoryByDefault,
+        reportHistoryMonths: p.reportHistoryMonths,
       });
       if (res.ok) { setP(res.policy); setSaved(res.policy); toast('success', t('policy.updated')); }
       else { setError(res.error); toast('error', res.error); }
@@ -182,6 +183,18 @@ export function PolicyClient({ initial }: { initial: LabPolicy }) {
             max={6}
             step={1}
             onChange={(v) => setP({ ...p, reportHistoryColumns: Math.min(6, Math.max(1, Math.round(v))) })}
+          />
+          <Field
+            label={t('policy.historyMonths')}
+            hint={p.reportHistoryMonths > 0
+              ? t('policy.historyMonthsOn').replace('{n}', String(p.reportHistoryMonths))
+              : t('policy.historyMonthsOff')}
+            suffix={t('policy.months')}
+            value={p.reportHistoryMonths}
+            min={0}
+            max={120}
+            step={1}
+            onChange={(v) => setP({ ...p, reportHistoryMonths: Math.min(120, Math.max(0, Math.round(v))) })}
           />
         </div>
         <Toggle

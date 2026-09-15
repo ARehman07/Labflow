@@ -7,10 +7,10 @@ import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmButton } from '@/components/ui/ConfirmButton';
-import { Select } from '@/components/ui/Select';
 import { SectionHeading, ACCENT } from '@/components/ui/List';
 import { useToast } from '@/components/ui/Toast';
 import { Tr } from '@/components/ui/Tr';
+import { PatientFields, patientFieldsValid, type AgeUnit, type PatientFieldValues } from '@/components/patients/PatientFields';
 import { updateSlipPatientAction, reopenResultsAction } from '@/modules/reception/slip.actions';
 import type { SlipData } from './SlipView';
 
@@ -18,35 +18,45 @@ import type { SlipData } from './SlipView';
  * Modify slip. Two corrections the counter needs after a slip is printed:
  * the patient's details were typed wrong, or a released result was wrong and
  * has to come back for correction. Changing the tests is Edit booking.
+ *
+ * The patient part is the same PatientFields the registration form uses, with
+ * the same four required facts, so a correction never asks for more or less
+ * than registering did.
  */
 export function ModifySlipPanel({ data, onClose }: { data: SlipData; onClose: () => void }) {
   const { t } = useI18n();
   const router = useRouter();
   const toast = useToast();
   const p = data.patient;
-  const [f, setF] = useState({
+  const [f, setF] = useState<PatientFieldValues>({
     fullName: p.fullName,
     mobile: p.mobile ?? '',
-    cnic: p.cnic ?? '',
     sex: p.sex ?? '',
-    dateOfBirth: p.dateOfBirth ?? '',
     age: p.age != null ? String(p.age) : '',
-    ageUnit: p.ageUnit || 'YEARS',
+    ageUnit: (['YEARS', 'MONTHS', 'DAYS'].includes(p.ageUnit) ? p.ageUnit : 'YEARS') as AgeUnit,
+    cnic: p.cnic ?? '',
+    email: p.email ?? '',
     address: p.address ?? '',
   });
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [saving, startSave] = useTransition();
   const [reopening, startReopen] = useTransition();
-  const set = (k: keyof typeof f) => (v: string) => setF((cur) => ({ ...cur, [k]: v }));
+  const canSave = patientFieldsValid(f);
 
   function save() {
+    if (!canSave) return;
     setError(null);
     startSave(async () => {
       const res = await updateSlipPatientAction(data.visitId, {
-        ...f,
-        sex: f.sex || undefined,
-        age: f.age === '' ? undefined : Number(f.age),
+        fullName: f.fullName,
+        mobile: f.mobile.trim(),
+        sex: f.sex,
+        age: Number(f.age),
+        ageUnit: f.ageUnit,
+        cnic: f.cnic,
+        email: f.email,
+        address: f.address,
       });
       if (res.ok) { toast('success', t('modify.saved')); router.refresh(); onClose(); }
       else setError(res.error);
@@ -81,62 +91,10 @@ export function ModifySlipPanel({ data, onClose }: { data: SlipData; onClose: ()
         <section>
           <SectionHeading accent={ACCENT.brand}>{t('modify.patient')}</SectionHeading>
           <p className="mb-3 text-xs text-subtle">{t('modify.patientHint').replace('{mr}', data.mrNo)}</p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="block sm:col-span-2">
-              <span className="label">{t('reception.fullName')}</span>
-              <input value={f.fullName} onChange={(e) => set('fullName')(e.target.value)} maxLength={120} className="field" />
-            </label>
-            <label className="block">
-              <span className="label">{t('reception.mobile')}</span>
-              <input value={f.mobile} onChange={(e) => set('mobile')(e.target.value)} inputMode="tel" maxLength={11} placeholder="03001234567" className="field" />
-            </label>
-            <label className="block">
-              <span className="label">{t('modify.cnic')}</span>
-              <input value={f.cnic} onChange={(e) => set('cnic')(e.target.value)} inputMode="numeric" maxLength={15} placeholder="3310012345671" className="field" />
-            </label>
-            <div>
-              <span className="label">{t('reception.sex')}</span>
-              <Select
-                value={f.sex}
-                onChange={set('sex')}
-                options={[
-                  { value: '', label: '—' },
-                  { value: 'MALE', label: t('reception.male') },
-                  { value: 'FEMALE', label: t('reception.female') },
-                  { value: 'OTHER', label: t('reception.other') },
-                ]}
-              />
-            </div>
-            <label className="block">
-              <span className="label">{t('modify.dob')}</span>
-              <input type="date" value={f.dateOfBirth} max={new Date().toISOString().slice(0, 10)} onChange={(e) => set('dateOfBirth')(e.target.value)} className="field" />
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="label">{t('reception.age')}</span>
-                <input type="number" min={0} max={150} value={f.age} disabled={f.dateOfBirth !== ''} onChange={(e) => set('age')(e.target.value)} className="field tabular-nums" />
-              </label>
-              <div>
-                <span className="label">{t('modify.ageUnit')}</span>
-                <Select
-                  value={f.ageUnit}
-                  onChange={set('ageUnit')}
-                  options={[
-                    { value: 'YEARS', label: t('modify.years') },
-                    { value: 'MONTHS', label: t('modify.months') },
-                    { value: 'DAYS', label: t('modify.days') },
-                  ]}
-                />
-              </div>
-            </div>
-            <label className="block">
-              <span className="label">{t('reception.address')}</span>
-              <input value={f.address} onChange={(e) => set('address')(e.target.value)} maxLength={200} className="field" />
-            </label>
-          </div>
-          {f.dateOfBirth !== '' && <p className="mt-2 text-xs text-subtle">{t('modify.dobHint')}</p>}
-          <div className="mt-3 flex justify-end">
-            <Button onClick={save} loading={saving} disabled={f.fullName.trim().length < 2}>{t('modify.save')}</Button>
+          <PatientFields value={f} onChange={setF} idPrefix="modify" />
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+            <p className="me-auto text-xs text-subtle">{canSave ? ' ' : t('patient.requiredHint')}</p>
+            <Button onClick={save} loading={saving} disabled={!canSave}>{t('modify.save')}</Button>
           </div>
         </section>
       )}

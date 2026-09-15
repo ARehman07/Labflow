@@ -114,6 +114,7 @@ export interface TestRangeDTO {
   text: string;
 }
 export interface TestParamDTO {
+  analyteCode: string;
   name: string; code: string; unit: string; valueType: string; options: string;
   isBold: boolean; refLow: string; refHigh: string; refText: string; formula: string;
   cutoff: string; positiveLabel: string; negativeLabel: string;
@@ -160,7 +161,7 @@ export async function getTestAction(id: string): Promise<TestEditDTO | null> {
     parameters: t.parameters.map((p) => {
       const r = p.referenceRanges[0];
       return {
-        name: p.name, code: p.code, unit: p.unit ?? '', valueType: p.valueType, options: p.options ?? '',
+        name: p.name, code: p.code, analyteCode: p.analyteCode ?? '', unit: p.unit ?? '', valueType: p.valueType, options: p.options ?? '',
         isBold: p.isBold,
         refLow: r?.low != null ? String(Number(r.low)) : '',
         refHigh: r?.high != null ? String(Number(r.high)) : '',

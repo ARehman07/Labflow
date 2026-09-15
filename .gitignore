@@ -12,3 +12,6 @@ coverage
 prisma/*.db
 *.tsbuildinfo
 next-env.d.ts.timestamp
+
+# Local-only explainer notes (roles, flows, data model)
+docs/

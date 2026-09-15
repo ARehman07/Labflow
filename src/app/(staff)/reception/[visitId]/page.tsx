@@ -72,6 +72,7 @@ export default async function SlipPage({ params }: { params: { visitId: string }
       fullName: visit.patient.fullName,
       mobile: visit.patient.mobile,
       cnic: visit.patient.cnic,
+      email: visit.patient.email,
       sex: visit.patient.sex,
       dateOfBirth: visit.patient.dateOfBirth ? visit.patient.dateOfBirth.toISOString().slice(0, 10) : null,
       age: visit.patient.age,

@@ -23,7 +23,7 @@ export const settingsService = {
         familyCardDiscountPct: true, familyCardMemberCap: true, familyCardFee: true,
         familyCardDiscountOnIssue: true, allowSelfVerify: true,
         resultEditLockMins: true, refundWindowHours: true,
-        reportHistoryColumns: true, reportHistoryByDefault: true,
+        reportHistoryColumns: true, reportHistoryByDefault: true, reportHistoryMonths: true,
       },
     });
     return {
@@ -38,6 +38,7 @@ export const settingsService = {
       refundWindowHours: t.refundWindowHours,
       reportHistoryColumns: t.reportHistoryColumns,
       reportHistoryByDefault: t.reportHistoryByDefault,
+      reportHistoryMonths: t.reportHistoryMonths,
     };
   },
 

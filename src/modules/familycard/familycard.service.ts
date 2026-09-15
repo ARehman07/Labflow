@@ -212,6 +212,57 @@ export const familyCardService = {
     };
   },
 
+  /**
+   * The card held on a number, for the booking screen's banner. Works before a
+   * patient exists — reception is often still typing a new patient's number —
+   * and, once one is chosen, says whether they are on it or could join it.
+   */
+  async hintForMobile(mobile: string, patientId: string | null) {
+    const tenantId = await currentTenantId();
+    const db = await tenantDb();
+
+    const card = await db.familyCard.findUnique({
+      where: { tenantId_mobile: { tenantId, mobile } },
+      include: {
+        primaryPatient: { select: { fullName: true, mrNo: true } },
+        members: { where: { removedAt: null }, select: { patientId: true } },
+      },
+    });
+    if (!card) return null;
+
+    const onThisCard = !!patientId && card.members.some((m) => m.patientId === patientId);
+    let canJoin: boolean | null = null;
+    let reason: string | null = null;
+    if (patientId && !onThisCard) {
+      const elsewhere = await db.familyCardMember.findFirst({
+        where: { patientId, removedAt: null, cardId: { not: card.id }, card: { isActive: true } },
+      });
+      const verdict = canAddMember({
+        memberCap: card.memberCap,
+        currentMemberCount: card.members.length,
+        alreadyOnThisCard: false,
+        onAnotherCard: Boolean(elsewhere),
+        cardIsActive: card.isActive,
+        expiresAt: card.expiresAt,
+      });
+      canJoin = verdict.ok;
+      reason = verdict.ok ? null : verdict.reason;
+    }
+
+    return {
+      mobile: card.mobile,
+      holderName: card.primaryPatient.fullName,
+      holderMrNo: card.primaryPatient.mrNo,
+      discountPct: Number(card.discountPct),
+      used: card.members.length,
+      cap: card.memberCap,
+      usable: cardIsUsable(card),
+      onThisCard,
+      canJoin,
+      reason,
+    };
+  },
+
   /** The lab's card policy, as reception needs it to price a slip. */
   async policy(): Promise<{ fee: number; discountPct: number; discountOnIssue: boolean }> {
     const t = await (await tenantDb()).tenant.findUniqueOrThrow({

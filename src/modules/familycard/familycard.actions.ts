@@ -177,6 +177,37 @@ export async function listCardsAction(query?: string): Promise<CardSummaryDTO[]>
   }));
 }
 
+export interface FamilyCardHintDTO {
+  mobile: string;
+  holderName: string;
+  holderMrNo: string;
+  discountPct: number;
+  used: number;
+  cap: number;
+  /** Active and not expired. */
+  usable: boolean;
+  /** The chosen patient is already a member. */
+  onThisCard: boolean;
+  /** Whether the chosen patient could join; null while no patient is chosen. */
+  canJoin: boolean | null;
+  reason: string | null;
+}
+
+/**
+ * The card on a number, for the banner that follows a booking through every
+ * step. Takes a patient when there is one, but does not need it: the banner
+ * appears while a new patient's number is still being typed.
+ */
+export async function familyCardHintAction(
+  mobile: string,
+  patientId: string | null,
+): Promise<FamilyCardHintDTO | null> {
+  await requirePermission('visit.create');
+  const m = mobile.trim();
+  if (!/^0\d{10}$/u.test(m)) return null;
+  return familyCardService.hintForMobile(m, patientId);
+}
+
 /**
  * Any card reachable from a number, whoever holds it.
  *

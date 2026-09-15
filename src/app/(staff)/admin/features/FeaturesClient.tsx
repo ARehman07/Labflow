@@ -20,7 +20,7 @@ const SAMPLE_KEYS = Object.values(SAMPLE_SOURCE_FEATURES) as FeatureKey[];
  * The lab owner's switchboard: which parts of LabFlow this lab uses. What is
  * off disappears from the menu, the screens and the booking steps.
  */
-export function FeaturesClient({ initial }: { initial: Features }) {
+export function FeaturesClient({ initial, locked: planLocked }: { initial: Features; locked: FeatureKey[] }) {
   const { t } = useI18n();
   const toast = useToast();
   const router = useRouter();
@@ -53,12 +53,14 @@ export function FeaturesClient({ initial }: { initial: Features }) {
           <ul className="mt-2 divide-y divide-line">
             {g.keys.map((key) => {
               // The last way of taking a sample cannot be switched off.
-              const locked = SAMPLE_KEYS.includes(key) && f[key] && samplesOn === 1;
+              const lastSample = SAMPLE_KEYS.includes(key) && f[key] && samplesOn === 1;
+              const notInPlan = planLocked.includes(key);
+              const locked = lastSample || notInPlan;
               return (
                 <li key={key} className="flex items-start gap-4 py-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-body">{t(`feat.${key}`)}</p>
-                    <p className="mt-0.5 text-xs text-subtle">{locked ? t('feat.lastSample') : t(`feat.${key}.desc`)}</p>
+                    <p className="mt-0.5 text-xs text-subtle">{notInPlan ? t('feat.locked') : lastSample ? t('feat.lastSample') : t(`feat.${key}.desc`)}</p>
                   </div>
                   <button
                     type="button"

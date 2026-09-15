@@ -64,3 +64,21 @@ export function parseFeatures(raw: string | null | undefined): Features {
 }
 
 export const ALL_FEATURES_ON: Features = normaliseFeatures(null);
+
+/** The features a lab's plan leaves out, from what the platform console stored. */
+export function parseLocked(raw: string | null | undefined): FeatureKey[] {
+  try {
+    const value = JSON.parse(raw ?? '[]');
+    return Array.isArray(value) ? value.filter((k): k is FeatureKey => (FEATURE_KEYS as readonly string[]).includes(k)) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A lab's switches with its plan's exclusions forced off — never every way of taking a sample. */
+export function applyLocks(features: Features, locked: FeatureKey[]): Features {
+  const out = { ...features };
+  for (const k of locked) out[k] = false;
+  if (!Object.values(SAMPLE_SOURCE_FEATURES).some((k) => out[k])) out['booking.sampleInLab'] = true;
+  return out;
+}

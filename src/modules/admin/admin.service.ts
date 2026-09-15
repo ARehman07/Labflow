@@ -50,6 +50,7 @@ function parameterFields(p: ParameterInput, sortOrder: number) {
   return {
     name: p.name,
     code: p.code,
+    analyteCode: p.analyteCode ?? null,
     unit: p.unit ?? null,
     valueType: p.valueType,
     options: p.options ?? null,

@@ -1,3 +1,4 @@
+import { labAccessFor } from '@/core/billing/access.server';
 import { createHash, randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { tenantDb, currentTenantId, runAsTenant } from '@/core/db/context';
@@ -96,6 +97,9 @@ export const analyzersService = {
   async ingest(key: string, payload: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
     const analyzer = key ? await unscopedPrisma.analyzer.findUnique({ where: { keyHash: hashKey(key) } }) : null;
     if (!analyzer || !analyzer.isActive) return { status: 401, body: { error: 'Unknown or disabled analyzer key.' } };
+
+    const { level } = await labAccessFor(analyzer.tenantId);
+    if (level === 'READ_ONLY' || level === 'SUSPENDED') return { status: 403, body: { error: 'This lab’s LabFlow account is restricted.' } };
 
     return runAsTenant(analyzer.tenantId, async () => {
       const db = await tenantDb();

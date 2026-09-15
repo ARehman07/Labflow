@@ -24,13 +24,23 @@ const emptyRange = (): Range => ({
 });
 
 const emptyParam = (): Param => ({
-  name: '', code: '', unit: '', valueType: 'NUMBER', options: '',
+  name: '', code: '', analyteCode: '', unit: '', valueType: 'NUMBER', options: '',
   isBold: false, refLow: '', refHigh: '', refText: '', formula: '',
   cutoff: '', positiveLabel: '', negativeLabel: '',
   ranges: [emptyRange()],
 });
 
 const SPECIMENS = ['BLOOD', 'SERUM', 'PLASMA', 'URINE', 'STOOL', 'SWAB', 'OTHER'];
+
+/** Common analyte codes, offered as suggestions so the same thing gets the same code on every test. */
+const ANALYTE_SUGGESTIONS = [
+  'HB', 'WBC', 'RBC', 'PLT', 'HCT', 'MCV', 'MCH', 'MCHC', 'ESR',
+  'GLUCOSE_F', 'GLUCOSE_R', 'GLUCOSE_PP', 'HBA1C',
+  'TCHOL', 'HDL', 'LDL', 'VLDL', 'TG', 'CHOL_HDL',
+  'UREA', 'CREAT', 'URIC', 'NA', 'K', 'CL', 'CA',
+  'ALT', 'AST', 'ALP', 'TBIL', 'DBIL', 'ALB', 'TP',
+  'TSH', 'T3', 'T4', 'FT4', 'VITD', 'B12', 'FERRITIN', 'CRP', 'HBSAG', 'HCV', 'ABO',
+];
 
 export function TestEditor({
   initial,
@@ -82,7 +92,7 @@ export function TestEditor({
         name, code, departmentId, tatHours: Number(tatHours), specimenType, price: Number(price), methodNote, reportFormat,
         // A culture is entered as organism and sensitivities; blank parameter rows are not sent.
         parameters: params.filter((p) => reportFormat !== 'CULTURE' || p.name.trim()).map((p) => ({
-          name: p.name, code: p.code, unit: p.unit, valueType: p.valueType, options: p.options,
+          name: p.name, code: p.code, analyteCode: p.analyteCode, unit: p.unit, valueType: p.valueType, options: p.options,
           isBold: p.isBold, formula: p.formula,
           cutoff: p.cutoff, positiveLabel: p.positiveLabel, negativeLabel: p.negativeLabel,
           // Ranges carry the limits now; the single legacy fields are left blank.
@@ -144,11 +154,27 @@ export function TestEditor({
       {/* Parameters */}
       <div className="space-y-3">
         <div className="section-title">{t('admin.parameters')}</div>
+        <p className="text-xs text-subtle">{t('admin.analyteHint')}</p>
+        <datalist id="analyte-codes">
+          {ANALYTE_SUGGESTIONS.map((c) => <option key={c} value={c} />)}
+        </datalist>
         {params.map((p, i) => (
           <Card key={i} className="p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <div><label className="label">{t('admin.parameter')}</label><input value={p.name} onChange={(e) => updateParam(i, { name: e.target.value })} className="field" /></div>
               <div><label className="label">{t('admin.code')}</label><input value={p.code} onChange={(e) => updateParam(i, { code: e.target.value })} placeholder="e.g. HDL" className="field" /></div>
+              <div>
+                <label className="label" htmlFor={`analyte-${i}`}>{t('admin.analyteCode')}</label>
+                <input
+                  id={`analyte-${i}`}
+                  list="analyte-codes"
+                  value={p.analyteCode}
+                  onChange={(e) => updateParam(i, { analyteCode: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '') })}
+                  placeholder="e.g. TCHOL"
+                  title={t('admin.analyteHint')}
+                  className="field font-mono"
+                />
+              </div>
               <div><label className="label">{t('admin.type')}</label>
                 <Select value={p.valueType} onChange={(v) => updateParam(i, { valueType: v })} options={valueTypeOpts} />
               </div>

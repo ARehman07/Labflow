@@ -21,6 +21,8 @@ export default auth((req) => {
   const isPublic =
     pathname.startsWith('/login') ||
     pathname.startsWith('/portal') ||
+    // The platform console signs its admins in itself, apart from lab sessions.
+    pathname.startsWith('/platform') ||
     pathname.startsWith('/api/auth') ||
     // Analyzers authenticate with their own API key, checked in the route.
     pathname.startsWith('/api/analyzer');

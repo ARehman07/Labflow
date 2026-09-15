@@ -343,9 +343,7 @@ export async function getEntryAction(orderLineId: string): Promise<EntryDTO | nu
     age: number | null;
     ageUnit: AgeUnit | null;
   });
-  const previous = await labService.previousResults(
-    line.visit.patientId, line.id, line.test.parameters.map((p) => p.id),
-  );
+  const previous = await labService.previousResults(line.visit.patientId, line.visitId, line.test.parameters);
   const nextLine = user.branchId
     ? await labService.nextForEntry(user.branchId, line.id, line.visitId)
     : null;
@@ -474,10 +472,13 @@ export interface ApprovalDTO {
 export async function getApprovalsAction(): Promise<ApprovalDTO[]> {
   const user = await requirePermission('result.approve');
   if (!user.branchId) return [];
-  const [lines, allowSelfVerify] = await Promise.all([
+  const [lines, selfVerifySetting, ownerOverride] = await Promise.all([
     labService.getApprovals(user.branchId),
     labService.allowSelfVerify(),
+    can('settings.manage'),
   ]);
+  // The owner is never held by the rule; see labService.approve.
+  const allowSelfVerify = selfVerifySetting || ownerOverride;
   return lines.map((l) => {
     const byParam = new Map(l.results.map((r) => [r.parameterId, r]));
     // The range that applies to this patient, not whichever row sorts first —
@@ -535,11 +536,12 @@ export async function approveManyAction(
   orderLineIds: string[],
 ): Promise<{ approved: number; failed: { orderLineId: string; error: string }[] }> {
   const user = await requirePermission('result.approve');
+  const ownerOverride = await can('settings.manage');
   let approved = 0;
   const failed: { orderLineId: string; error: string }[] = [];
   for (const id of orderLineIds.slice(0, 60)) {
     try {
-      await labService.approve(id, { id: user.id, role: user.role });
+      await labService.approve(id, { id: user.id, role: user.role }, { ownerOverride });
       approved++;
     } catch (e) {
       failed.push({ orderLineId: id, error: e instanceof Error ? e.message : 'Approval failed' });
@@ -562,7 +564,7 @@ async function tellPatientIfReady(orderLineIds: string[], userId: string) {
 export async function approveAction(orderLineId: string): Promise<ActionResult> {
   const user = await requirePermission('result.approve');
   try {
-    await labService.approve(orderLineId, { id: user.id, role: user.role });
+    await labService.approve(orderLineId, { id: user.id, role: user.role }, { ownerOverride: await can('settings.manage') });
     await tellPatientIfReady([orderLineId], user.id);
     return { ok: true };
   } catch (e) {

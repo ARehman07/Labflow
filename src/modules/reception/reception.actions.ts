@@ -5,7 +5,7 @@ import { requirePermission } from '@/core/rbac/guard';
 import { listTests, priceTests, type TestListItem } from '@/modules/catalog/catalog.service';
 import { receptionService, BookingEditError } from './reception.service';
 import { messagesService } from '@/modules/messages/messages.service';
-import { patientCreateSchema, bookVisitSchema } from './reception.schema';
+import { newPatientSchema, bookVisitSchema } from './reception.schema';
 
 export interface PatientDTO {
   id: string;
@@ -80,7 +80,7 @@ export type CreatePatientResult =
 
 export async function createPatientAction(input: unknown): Promise<CreatePatientResult> {
   await requirePermission('patient.manage');
-  const parsed = patientCreateSchema.safeParse(input);
+  const parsed = newPatientSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid patient details' };
   }

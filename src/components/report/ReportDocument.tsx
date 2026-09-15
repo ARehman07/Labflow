@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
@@ -9,6 +10,7 @@ import { Letterhead } from '@/components/report/Letterhead';
 import { cn } from '@/lib/utils';
 import type { ReportData, ReportTest } from '@/modules/reporting/report.types';
 import { fontStack } from '@/modules/reporting/layout';
+import { printElement } from '@/lib/print-isolated';
 
 /**
  * The document a patient keeps and a referring doctor judges the lab by.
@@ -45,6 +47,7 @@ export function ReportDocument({
   letterhead?: boolean;
 }) {
   const { t } = useI18n();
+  const sheet = useRef<HTMLDivElement>(null);
   const lh = data.letterhead;
   const layout = data.layout;
   const showHeader = letterhead ?? layout.showHeader;
@@ -70,7 +73,7 @@ export function ReportDocument({
       {showActions && (
         <div className="no-print flex items-center justify-between">
           <h1 className="text-2xl font-extrabold tracking-tight text-strong">{t('report.title')}</h1>
-          <Button variant="outline" onClick={() => window.print()}>
+          <Button variant="outline" onClick={() => void printElement(sheet.current)}>
             <Icon name="print" className="h-4 w-4" /> {t('report.print')}
           </Button>
         </div>
@@ -79,6 +82,7 @@ export function ReportDocument({
       {/* The lab's page margins. Only this page's @page rule — a slip keeps its own. */}
       <style>{`@media print { @page { margin: ${layout.topMarginMm}mm 12mm ${layout.bottomMarginMm}mm 12mm; } }`}</style>
       <div
+        ref={sheet}
         className="print-area report-sheet card p-4 sm:p-8 print:rounded-none print:border-0 print:p-0 print:shadow-none"
         style={{ fontFamily: fontStack(layout.font) }}
       >
@@ -307,10 +311,13 @@ function TestBlock({ test, withHistory }: { test: ReportTest; withHistory: boole
                 {cols.map((c, ci) => {
                   const v = p.previous[ci];
                   const f = p.previousFlags[ci];
+                  const u = p.previousUnits?.[ci];
                   return (
                     <td key={c.visitId} className={cn('py-1.5 ps-1 text-end text-xs tabular-nums print:text-[10px]',
                       f === 'HIGH' || f === 'CRITICAL' ? 'text-red-700' : f === 'LOW' ? 'text-blue-700' : 'text-muted')}>
                       {v ?? '—'}{f && f !== 'NORMAL' && v != null ? ` ${FLAG_MARK[f] === 'CRITICAL' ? '!' : FLAG_MARK[f]}` : ''}
+                      {/* Recorded in another unit: say which, so it is not read as today's scale. */}
+                      {u && v != null && <span className="block text-[8px] leading-3 text-subtle">{u}</span>}
                     </td>
                   );
                 })}

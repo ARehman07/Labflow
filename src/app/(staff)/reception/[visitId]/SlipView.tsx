@@ -12,7 +12,7 @@ import { QrCode } from '@/components/ui/QrCode';
 import { Letterhead } from '@/components/report/Letterhead';
 import { formatPkr } from '@/lib/utils';
 import type { Letterhead as LetterheadData } from '@/modules/reporting/report.types';
-import { Ban, FilePlus2, IdCard, MessageSquareText, PencilLine } from 'lucide-react';
+import { Ban, FilePlus2, IdCard, MessageSquareText, PencilLine, Tag } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 
 export interface SlipData {
@@ -44,7 +44,7 @@ export interface SlipData {
   can: { modify: boolean; cancel: boolean; reopen: boolean };
   /** The patient record, for correcting it from the slip. */
   patient: {
-    fullName: string; mobile: string | null; cnic: string | null; sex: string | null;
+    fullName: string; mobile: string | null; cnic: string | null; email: string | null; sex: string | null;
     dateOfBirth: string | null; age: number | null; ageUnit: string; address: string | null;
   };
   /** Tests already released on this slip — what Mark results pending would take back. */
@@ -106,6 +106,12 @@ export function SlipView({ data }: { data: SlipData }) {
               <Link href="/reception" className={buttonVariants({ variant: 'outline' })}>
                 <FilePlus2 className="h-4 w-4" /> {t('slip.newBooking')}
               </Link>
+              {/* Labels go on the tubes before the sample is taken, so they print from the slip. */}
+              {!cancelled && (
+                <Link href={`/lab/labels/${data.visitId}`} className={buttonVariants({ variant: 'outline' })}>
+                  <Tag className="h-4 w-4" /> {t('slip.labels')}
+                </Link>
+              )}
               <PrintButton variant="primary" />
             </>
           }

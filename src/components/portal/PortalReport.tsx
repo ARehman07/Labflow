@@ -7,6 +7,7 @@ import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button, buttonVariants } from '@/components/ui/Button';
 import { ReportDocument } from '@/components/report/ReportDocument';
 import { exportReport, reportFileName } from '@/lib/report-export';
+import { printElement } from '@/lib/print-isolated';
 import type { ReportData } from '@/modules/reporting/report.types';
 
 /** A released report for a partner lab or doctor: history on request, print or save as PDF. */
@@ -34,7 +35,7 @@ export function PortalReport({ data, back }: { data: ReportData; back: string })
           </Button>
         )}
         <Button variant="outline" size="sm" loading={saving} onClick={pdf}><FileDown className="h-3.5 w-3.5" /> {t('report.downloadPdf')}</Button>
-        <Button size="sm" onClick={() => window.print()}><Printer className="h-3.5 w-3.5" /> {t('report.print')}</Button>
+        <Button size="sm" onClick={() => void printElement(box.current?.querySelector('.report-sheet'))}><Printer className="h-3.5 w-3.5" /> {t('report.print')}</Button>
       </div>
       <div ref={box}><ReportDocument data={data} showActions={false} withHistory={history} /></div>
     </div>

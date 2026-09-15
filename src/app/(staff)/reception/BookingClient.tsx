@@ -11,7 +11,9 @@ import {
   currentCardForPatientAction,
   cardOnNumberAction,
   getCardPolicyAction,
+  familyCardHintAction,
   type BookingCardInfo,
+  type FamilyCardHintDTO,
 } from '@/modules/familycard/familycard.actions';
 import { MEMBER_RELATIONS, type Relation } from '@/modules/familycard/familycard.rules';
 import { Button } from '@/components/ui/Button';
@@ -157,6 +159,11 @@ export function BookingClient() {
   // instead of a search each.
   const [lastVisit, setLastVisit] = useState<{ bookedAt: string; tests: QuickTest[] } | null>(null);
   const [popular, setPopular] = useState<QuickTest[]>([]);
+  // Packages, common tests and "repeat last visit" arrive in the background.
+  // Their slot holds one placeholder until all of them are in, so the cart
+  // below never jumps when a list lands.
+  const [pickerReady, setPickerReady] = useState(false);
+  const [lastVisitFor, setLastVisitFor] = useState<string | null>(null);
   const patientBox = useRef<HTMLDivElement>(null);
   const testBox = useRef<HTMLDivElement>(null);
 
@@ -175,8 +182,10 @@ export function BookingClient() {
   }, []);
 
   useEffect(() => {
-    popularTestsAction().then(setPopular).catch(() => setPopular([]));
-    listPackagesAction().then(setPackages).catch(() => setPackages([]));
+    Promise.allSettled([
+      popularTestsAction().then(setPopular).catch(() => setPopular([])),
+      listPackagesAction().then(setPackages).catch(() => setPackages([])),
+    ]).then(() => setPickerReady(true));
     listRateGroupsAction().then(setRateGroups).catch(() => setRateGroups([]));
     listCollectionPointsAction().then(setCollectionPoints).catch(() => setCollectionPoints([]));
     listInwardPartnersAction().then(setPartners).catch(() => setPartners([]));
@@ -187,7 +196,8 @@ export function BookingClient() {
 
   useEffect(() => {
     if (!selected) { setLastVisit(null); setDues(null); return; }
-    lastVisitTestsAction(selected.id).then(setLastVisit).catch(() => setLastVisit(null));
+    const id = selected.id;
+    lastVisitTestsAction(id).then(setLastVisit).catch(() => setLastVisit(null)).finally(() => setLastVisitFor(id));
     patientDuesAction(selected.id).then(setDues).catch(() => setDues(null));
   }, [selected]);
 
@@ -226,6 +236,34 @@ export function BookingClient() {
       setSuggested(null);
     })();
   }, [selected, patientQuery, f]);
+
+  // The family card banner. Whichever number this booking is about — the card
+  // the chosen patient already holds, their own mobile, a number typed into the
+  // search, or the mobile on the new-patient form — is checked as soon as it is
+  // a full number, and the result stays pinned under the steps until the
+  // patient changes, so a card is never discovered only at the till.
+  const [formMobile, setFormMobile] = useState('');
+  const [cardHint, setCardHint] = useState<FamilyCardHintDTO | null>(null);
+  useEffect(() => {
+    if (!f['booking.familyCards']) { setCardHint(null); return; }
+    const typed = selected ? patientQuery : patientTab === 'NEW' ? formMobile : patientQuery;
+    const numbers = [...new Set(
+      [ownCard?.mobile, selected?.mobile, typed]
+        .map((m) => m?.trim())
+        .filter((m): m is string => !!m && /^0\d{10}$/u.test(m)),
+    )];
+    if (numbers.length === 0) { setCardHint(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      for (const m of numbers) {
+        const hint = await familyCardHintAction(m, selected?.id ?? null).catch(() => null);
+        if (cancelled) return;
+        if (hint) { setCardHint(hint); return; }
+      }
+      if (!cancelled) setCardHint(null);
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [f, ownCard, selected, patientQuery, patientTab, formMobile]);
 
   const joinDeb = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
@@ -614,28 +652,13 @@ export function BookingClient() {
                         onCreated={(p) => { choosePatient(p); toast('success', p.mrNo); }}
                         onUseExisting={(p) => choosePatient(p)}
                         onCancel={() => setPatientTab('EXISTING')}
+                        onMobileChange={setFormMobile}
                       />
                     )}
                   </div>
                 </>
               )}
             </Card>
-
-            {/* Money still owed from earlier visits — said at the counter, where it can be collected. */}
-            {selected && dues && dues.total > 0 && (
-              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-warn-text" role="status">
-                <CircleAlert className="h-5 w-5 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="font-semibold">{t('reception.duesTitle').replace('{amount}', formatPkr(dues.total))}</div>
-                  <div className="text-xs opacity-80">
-                    {t('reception.duesSlips').replace('{slips}', dues.invoices.map((i) => `#${i.slipNo}`).join(', '))}
-                  </div>
-                </div>
-                <a href={`/billing?invoice=${dues.invoices[0].invoiceId}`} className="shrink-0 text-sm font-semibold underline underline-offset-2">
-                  {t('reception.duesCollect')}
-                </a>
-              </div>
-            )}
 
             {f['booking.referringDoctor'] && (<Card className="p-5">
               <div>
@@ -707,6 +730,12 @@ export function BookingClient() {
             />
             </div>
 
+            {!(pickerReady && (!selected || lastVisitFor === selected.id)) ? (
+              <div className="mt-3 space-y-2" aria-hidden>
+                <div className="skeleton h-11 w-full rounded-xl" />
+                <div className="skeleton h-7 w-2/3 rounded-full" />
+              </div>
+            ) : (<>
             {f['booking.packages'] && packages.some((p) => !cartPackages.some((x) => x.id === p.id)) && (
               <div className="mt-3">
                 <Select
@@ -763,6 +792,7 @@ export function BookingClient() {
                 )}
               </div>
             )}
+            </>)}
 
             <div className="mt-4">
               <div className="mb-1.5 text-xs font-medium text-muted">{t('reception.cart')}</div>
@@ -1084,40 +1114,39 @@ export function BookingClient() {
                               value={joinMobile}
                               onChange={(e) => setJoinMobile(e.target.value)}
                             />
-                            {joinInfo && (
-                              joinInfo.found && joinInfo.canJoin ? (
+                            {/* The status line and the relation picker are always drawn, so a
+                                lookup finishing never moves the form under the cursor. */}
+                            <p className={cn('mt-1.5 flex min-h-5 flex-wrap items-center gap-1.5 text-sm',
+                              joinInfo?.found && joinInfo.canJoin ? 'text-ok-text' : joinInfo ? 'text-danger-text' : 'text-subtle')}>
+                              {joinInfo?.found && joinInfo.canJoin ? (
                                 <>
-                                  <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm text-ok-text">
-                                    <Check className="h-4 w-4" />
-                                    <span className="font-semibold">{joinInfo.holderName}</span>
-                                    <span>· {joinInfo.discountPct}%</span>
-                                    <span className="text-subtle">
-                                      · {joinInfo.used}/{joinInfo.cap} {t('familyCard.slotsUsed')}
-                                    </span>
-                                  </p>
-                                  {/* Who they are to the holder is what justifies the
-                                      discount, so it is asked at the moment of joining
-                                      rather than left blank forever. */}
-                                  <div className="mt-2">
-                                    <span className="label">
-                                      {t('reception.relationTo').replace('{name}', joinInfo.holderName ?? '')}
-                                    </span>
-                                    <Select
-                                      value={joinRelation}
-                                      onChange={(v) => setJoinRelation(v as Relation)}
-                                      options={MEMBER_RELATIONS.map((r) => ({
-                                        value: r,
-                                        label: t(`relation.${r}`),
-                                      }))}
-                                    />
-                                  </div>
+                                  <Check className="h-4 w-4" />
+                                  <span className="font-semibold">{joinInfo.holderName}</span>
+                                  <span>· {joinInfo.discountPct}%</span>
+                                  <span className="text-subtle">
+                                    · {joinInfo.used}/{joinInfo.cap} {t('familyCard.slotsUsed')}
+                                  </span>
                                 </>
-                              ) : (
-                                <p className="mt-1.5 text-sm text-danger-text">
-                                  {joinInfo.reason ?? t('reception.cardNotFound')}
-                                </p>
-                              )
-                            )}
+                              ) : joinInfo ? (joinInfo.reason ?? t('reception.cardNotFound')) : t('reception.cardJoinHint')}
+                            </p>
+                            {/* Who they are to the holder is what justifies the discount,
+                                so it is asked at the moment of joining. */}
+                            <div className="mt-2">
+                              <span className="label">
+                                {joinInfo?.found && joinInfo.canJoin
+                                  ? t('reception.relationTo').replace('{name}', joinInfo.holderName ?? '')
+                                  : t('reception.relationToHolder')}
+                              </span>
+                              <Select
+                                value={joinRelation}
+                                onChange={(v) => setJoinRelation(v as Relation)}
+                                disabled={!(joinInfo?.found && joinInfo.canJoin)}
+                                options={MEMBER_RELATIONS.map((r) => ({
+                                  value: r,
+                                  label: t(`relation.${r}`),
+                                }))}
+                              />
+                            </div>
                           </div>
                         )}
 
@@ -1232,17 +1261,19 @@ export function BookingClient() {
                             className="field-inner py-2.5 text-base font-semibold tabular-nums"
                           />
                         </div>
-                        {/* The sum the cashier would otherwise do in their head. */}
-                        {changeDue > 0 && (
-                          <p className="mt-1.5 rounded-lg bg-ok-soft px-3 py-2 text-sm font-semibold text-ok-text">
-                            {t('pay.change').replace('{amount}', formatPkr(changeDue))}
-                          </p>
-                        )}
-                        {stillDue > 0 && (
-                          <p className="mt-1.5 text-sm text-warn-text">
-                            {t('pay.remaining').replace('{amount}', formatPkr(stillDue))}
-                          </p>
-                        )}
+                        {/* The sum the cashier would otherwise do in their head. One line
+                            that is always there, so typing the amount never moves the form. */}
+                        <p
+                          className={cn('mt-1.5 rounded-lg px-3 py-2 text-sm font-semibold',
+                            changeDue > 0 ? 'bg-ok-soft text-ok-text' : stillDue > 0 ? 'bg-warn-soft text-warn-text' : 'bg-surface-2 text-subtle')}
+                          aria-live="polite"
+                        >
+                          {changeDue > 0
+                            ? t('pay.change').replace('{amount}', formatPkr(changeDue))
+                            : stillDue > 0
+                              ? t('pay.remaining').replace('{amount}', formatPkr(stillDue))
+                              : t('pay.exact')}
+                        </p>
                       </div>
                     </>
                   )}
@@ -1254,10 +1285,36 @@ export function BookingClient() {
 
         {error && <p className="animate-fade-in rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
 
-        {/* Always in reach: who and how much, and the way forward. */}
-        <div className="sticky bottom-20 z-10 flex items-center gap-2 rounded-2xl border border-line bg-surface/95 p-2.5 shadow-card backdrop-blur-md md:bottom-4 sm:gap-3 sm:p-3">
+        {/* Always in reach: who and how much, and the way forward — and above it
+            what reception must not miss about this patient: a family card, money
+            still owed. They live in this pinned stack rather than above the form,
+            so they stay in view on every step and never push what is being
+            filled in when a lookup comes back. */}
+        <div className="sticky bottom-20 z-10 space-y-2 md:bottom-4">
+          {/* One card indicator per step, always in view: the detailed banner on the
+              Patient step, where the card is discovered; the chip beside the name
+              in this bar on every step after it. */}
+          {cardHint && step === 0 && <FamilyCardBanner hint={cardHint} patientName={selected?.fullName ?? null} />}
+          {selected && dues && dues.total > 0 && (
+            <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-warn-line bg-warn-soft px-4 py-2.5 text-warn-text shadow-card" role="status">
+              <CircleAlert className="h-5 w-5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">{t('reception.duesTitle').replace('{amount}', formatPkr(dues.total))}</div>
+                <div className="truncate text-xs opacity-80">
+                  {t('reception.duesSlips').replace('{slips}', dues.invoices.map((i) => `#${i.slipNo}`).join(', '))}
+                </div>
+              </div>
+              <a href={`/billing?invoice=${dues.invoices[0].invoiceId}`} className="shrink-0 text-sm font-semibold underline underline-offset-2">
+                {t('reception.duesCollect')}
+              </a>
+            </div>
+          )}
+          <div className="flex items-center gap-2 rounded-2xl border border-line bg-surface/95 p-2.5 shadow-card backdrop-blur-md sm:gap-3 sm:p-3">
           <div className="min-w-0 flex-1 ps-1 text-sm">
-            <div className="truncate font-semibold text-strong">{selected?.fullName ?? t('book.noPatientYet')}</div>
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-semibold text-strong">{selected?.fullName ?? t('book.noPatientYet')}</span>
+              {cardHint && step > 0 && <FamilyCardChip hint={cardHint} patientName={selected?.fullName ?? null} />}
+            </div>
             <div className="truncate text-xs text-muted">
               {cartEmpty ? t('reception.noTests') : `${(testCount === 1 ? t('book.oneTest') : t('book.nTests').replace('{n}', String(testCount)))} · ${formatPkr(net)}`}
             </div>
@@ -1276,11 +1333,142 @@ export function BookingClient() {
               <Icon name="print" className="h-4 w-4" /> {t('reception.save')}
             </Button>
           )}
+          </div>
         </div>
         {step < 3 && !canReach(step + 1) && (
           <p className="text-center text-xs text-subtle">{step === 0 ? t('book.needPatient') : t('book.needTests')}</p>
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * A family card on the number this booking is about. Drawn as a gold card —
+ * the one warm, saturated block on the screen — so it is seen at a glance and
+ * not mistaken for the blue and amber notices around it.
+ */
+function FamilyCardBanner({ hint, patientName }: { hint: FamilyCardHintDTO; patientName: string | null }) {
+  const { t } = useI18n();
+
+  const { status, statusCls } = cardStatus(hint, t);
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex animate-fade-in-up items-center gap-3.5 rounded-2xl border border-amber-300 bg-surface bg-gradient-to-r from-amber-100 via-yellow-50 to-amber-50 p-3 pe-4 shadow-card dark:border-amber-500/40 dark:from-amber-500/20 dark:via-amber-500/10 dark:to-amber-500/5"
+    >
+      <div className="relative grid h-12 w-16 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 text-white shadow-md">
+        <CreditCard className="h-6 w-6" />
+        <span className="absolute -end-1 -top-1 flex h-3 w-3" aria-hidden>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75 [animation-iteration-count:4] motion-reduce:animate-none" />
+          <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-500 ring-2 ring-surface" />
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="font-bold text-amber-950 dark:text-amber-100">
+            {hint.onThisCard && patientName
+              ? t('book.cardOnPatient').replace('{name}', patientName)
+              : t('book.cardOnNumber')}
+          </span>
+          <span className="rounded-full bg-amber-600 px-2 py-0.5 text-xs font-bold text-white">
+            {t('book.cardPctOff').replace('{pct}', String(hint.discountPct))}
+          </span>
+        </div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-amber-900/80 dark:text-amber-200/80">
+          <span className="font-mono font-semibold tabular-nums">{hint.mobile}</span>
+          <span aria-hidden>·</span>
+          <span>{t('book.cardHolder').replace('{name}', `${hint.holderName} (${hint.holderMrNo})`)}</span>
+          <span aria-hidden>·</span>
+          <span>{t('book.cardMembersUsed').replace('{used}', String(hint.used)).replace('{cap}', String(hint.cap))}</span>
+        </div>
+        <div className={cn('mt-1 text-xs font-semibold', statusCls)}>{status}</div>
+      </div>
+    </div>
+  );
+}
+
+/** What reception can do with the card, in words, and the colour that goes with it. */
+function cardStatus(hint: FamilyCardHintDTO, t: (key: string) => string): { status: React.ReactNode; statusCls: string } {
+  if (!hint.usable) return { status: t('book.cardInactive'), statusCls: 'text-danger-text' };
+  if (hint.onThisCard) return { status: t('book.cardMember'), statusCls: 'text-ok-text' };
+  if (hint.canJoin === true) return { status: t('book.cardCanJoin'), statusCls: 'text-ok-text' };
+  if (hint.canJoin === false) {
+    return { status: hint.reason ? <Tr text={hint.reason} /> : t('book.cardCannotJoin'), statusCls: 'text-danger-text' };
+  }
+  return { status: t('book.cardSaveFirst'), statusCls: 'text-amber-900 dark:text-amber-200' };
+}
+
+/**
+ * The family card as a chip beside the patient's name in the pinned bar, on
+ * every step after Patient, so it stays in view on any screen size without
+ * repeating the banner. Solid when the patient is on the card, outlined when a card on the
+ * number could be joined, grey when it cannot be used. Tapping shows the details
+ * above the bar, over the page rather than pushing it.
+ */
+function FamilyCardChip({ hint, patientName }: { hint: FamilyCardHintDTO; patientName: string | null }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const state = !hint.usable || hint.canJoin === false ? 'blocked' : hint.onThisCard ? 'member' : 'available';
+  const { status, statusCls } = cardStatus(hint, t);
+  const label = state === 'member' ? t('book.chipCard') : state === 'available' ? t('book.chipAvailable') : t('book.chipBlocked');
+
+  return (
+    <span ref={box} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-label={`${label}${state !== 'blocked' ? ` · ${hint.discountPct}%` : ''}`}
+        className={cn(
+          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500',
+          state === 'member' && 'border border-amber-500 bg-amber-500 text-white hover:bg-amber-600',
+          state === 'available' && 'border border-amber-500 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300',
+          state === 'blocked' && 'border border-line-strong bg-surface-2 text-muted hover:text-strong',
+        )}
+      >
+        <CreditCard className="h-3 w-3" />
+        {/* Phones get the icon and the rate; the words come back from sm up. */}
+        <span className="hidden sm:inline">{label}</span>
+        {state !== 'blocked' && <span className="tabular-nums">{hint.discountPct}%</span>}
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={t('book.cardBadge')}
+          className="absolute bottom-full start-0 z-20 mb-2 w-72 max-w-[calc(100vw-2.5rem)] rounded-xl border border-amber-300 bg-surface p-3 text-xs shadow-dropdown animate-scale-in dark:border-amber-500/40"
+        >
+          <div className="font-bold text-strong">
+            {hint.onThisCard && patientName
+              ? t('book.cardOnPatient').replace('{name}', patientName)
+              : t('book.cardOnNumber')}
+            {' · '}{t('book.cardPctOff').replace('{pct}', String(hint.discountPct))}
+          </div>
+          <div className="mt-1 text-muted">
+            <span className="font-mono tabular-nums">{hint.mobile}</span>
+            {' · '}{t('book.cardHolder').replace('{name}', `${hint.holderName} (${hint.holderMrNo})`)}
+            {' · '}{t('book.cardMembersUsed').replace('{used}', String(hint.used)).replace('{cap}', String(hint.cap))}
+          </div>
+          <div className={cn('mt-1.5 font-semibold', statusCls)}>{status}</div>
+        </div>
+      )}
+    </span>
   );
 }

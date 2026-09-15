@@ -1,5 +1,7 @@
 import { auth } from '@/core/auth/auth';
 import type { PermissionCode } from './permissions';
+import { permissionAllowed } from '@/core/billing/access';
+import { labAccessFor, LabRestrictedError } from '@/core/billing/access.server';
 
 /** Thrown when an action is attempted without the required permission. */
 export class ForbiddenError extends Error {
@@ -28,6 +30,8 @@ export async function requirePermission(permission: PermissionCode) {
   const user = await currentUser();
   const perms = (user.permissions ?? []) as string[];
   if (!perms.includes(permission)) throw new ForbiddenError(permission);
+  // A lab whose subscription has lapsed keeps only what read-only access allows.
+  if (!permissionAllowed((await labAccessFor(user.tenantId)).level, permission)) throw new LabRestrictedError();
   return user;
 }
 
@@ -35,7 +39,8 @@ export async function requirePermission(permission: PermissionCode) {
 export async function can(permission: PermissionCode): Promise<boolean> {
   try {
     const user = await currentUser();
-    return (user.permissions ?? []).includes(permission);
+    if (!(user.permissions ?? []).includes(permission)) return false;
+    return permissionAllowed((await labAccessFor(user.tenantId)).level, permission);
   } catch {
     return false;
   }

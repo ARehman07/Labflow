@@ -2,19 +2,20 @@
 
 import { requirePermission } from '@/core/rbac/guard';
 import { tenantDb, currentTenantId } from '@/core/db/context';
-import { getFeatures } from '@/core/features/features.server';
-import { normaliseFeatures, type Features } from '@/core/features/catalog';
+import { getFeatures, lockedFeatures } from '@/core/features/features.server';
+import { applyLocks, normaliseFeatures, type FeatureKey, type Features } from '@/core/features/catalog';
 
-export async function getLabFeaturesAction(): Promise<Features> {
+export async function getLabFeaturesAction(): Promise<{ features: Features; locked: FeatureKey[] }> {
   await requirePermission('settings.manage');
-  return getFeatures();
+  return { features: await getFeatures(), locked: await lockedFeatures() };
 }
 
 export async function saveLabFeaturesAction(input: unknown): Promise<{ ok: true; features: Features } | { ok: false; error: string }> {
   const user = await requirePermission('settings.manage');
   if (!input || typeof input !== 'object') return { ok: false, error: 'Invalid settings' };
   const before = await getFeatures();
-  const features = normaliseFeatures(input as Record<string, unknown>);
+  // What the plan leaves out stays off, whatever was sent.
+  const features = applyLocks(normaliseFeatures(input as Record<string, unknown>), await lockedFeatures());
   const db = await tenantDb();
   const tenantId = await currentTenantId();
   await db.$transaction(async (tx) => {

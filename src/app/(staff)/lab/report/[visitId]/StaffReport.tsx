@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { whatsappLink } from '@/lib/whatsapp';
 import { renderTemplate } from '@/modules/messages/templates';
 import { exportReport, reportFileName, reportPdfBase64 } from '@/lib/report-export';
+import { printElement } from '@/lib/print-isolated';
 import { emailReportAction, integrationsStatusAction, smsReportAction } from '@/modules/delivery/delivery.actions';
 import { aiInterpretReportAction } from '@/modules/ai/ai.actions';
 import { markReportDeliveredAction, markReportPrintedAction } from '@/modules/lab/lab.actions';
@@ -49,6 +50,9 @@ export function StaffReport({
   const [busy, setBusy] = useState<string | null>(null);
   const [withHistory, setWithHistory] = useState(false);
   const [letterhead, setLetterhead] = useState(true);
+  // The sheet waits until this device's print choices are read, so it is drawn
+  // once in its final shape instead of redrawn with/without history columns.
+  const [ready, setReady] = useState(false);
   const sheet = useRef<HTMLDivElement>(null);
   const [services, setServices] = useState({ email: false, sms: false, ai: false });
   const [aiText, setAiText] = useState<string | null>(null);
@@ -91,13 +95,14 @@ export function StaffReport({
       const lhPref = localStorage.getItem(PREF_LETTERHEAD);
       setLetterhead(lhPref === null ? data.layout.showHeader : lhPref !== '0');
     } catch { setWithHistory(data.historyByDefault); setLetterhead(data.layout.showHeader); }
+    setReady(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const remember = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* storage blocked */ } };
 
   async function print() {
     if (canRelease && !printed) await markReportPrintedAction(visitId);
-    window.print();
+    await printElement(sheet.current?.querySelector('.report-sheet'));
     router.refresh();
   }
 
@@ -203,20 +208,32 @@ export function StaffReport({
           </Button>
           {!data.hasHistory && <span className="text-xs text-subtle">{t('report.noHistory')}</span>}
         </div>
-        {aiText && (
-          <div className="rounded-xl border border-brand-500/25 bg-brand-500/[0.05] p-4 text-sm">
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 font-semibold text-strong"><Sparkles className="h-4 w-4" /> {t('ai.draftTitle')}</span>
-              <button type="button" onClick={() => setAiText(null)} className="text-xs font-semibold text-muted hover:text-strong">{t('common.close')}</button>
-            </div>
-            <p className="whitespace-pre-wrap text-body">{aiText}</p>
-            <p className="mt-2 text-xs text-subtle">{t('ai.disclaimer')}</p>
+      </div>
+      <div ref={sheet}>
+        {ready ? (
+          <ReportDocument data={data} showActions={false} withHistory={withHistory} letterhead={letterhead} />
+        ) : (
+          // Same card the sheet sits in, holding the page's height for the one
+          // frame before the stored print choices are known.
+          <div className="card min-h-[70vh] space-y-3 p-4 sm:p-8" aria-hidden>
+            <div className="skeleton h-16 w-full" />
+            <div className="skeleton h-5 w-2/3" />
+            <div className="skeleton h-40 w-full" />
           </div>
         )}
       </div>
-      <div ref={sheet}>
-        <ReportDocument data={data} showActions={false} withHistory={withHistory} letterhead={letterhead} />
-      </div>
+      {/* Arrives after a slow request, so it sits under the sheet rather than
+          pushing the report down while someone is reading it. */}
+      {aiText && (
+        <div className="no-print rounded-xl border border-brand-500/25 bg-brand-500/[0.05] p-4 text-sm">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-semibold text-strong"><Sparkles className="h-4 w-4" /> {t('ai.draftTitle')}</span>
+            <button type="button" onClick={() => setAiText(null)} className="text-xs font-semibold text-muted hover:text-strong">{t('common.close')}</button>
+          </div>
+          <p className="whitespace-pre-wrap text-body">{aiText}</p>
+          <p className="mt-2 text-xs text-subtle">{t('ai.disclaimer')}</p>
+        </div>
+      )}
     </div>
   );
 }

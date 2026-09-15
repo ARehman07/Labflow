@@ -43,6 +43,28 @@ export const patientCreateSchema = z.object({
 });
 export type PatientCreateInput = z.infer<typeof patientCreateSchema>;
 
+/**
+ * Registering someone new at the counter. Name, gender, mobile and age are the
+ * four facts the bench and the report cannot do without — the reference range
+ * depends on age and sex, and the mobile is how the report and any family card
+ * find them — so they are required here, and on Modify slip (slipPatientSchema)
+ * too, so both forms ask for the same thing.
+ */
+export const newPatientSchema = patientCreateSchema.extend({
+  age: z.coerce
+    .number({ invalid_type_error: 'Enter the patient’s age' })
+    .int('Enter the age as a whole number')
+    .min(0, 'Enter the patient’s age')
+    .max(150, 'Enter a real age'),
+  sex: z.enum(['MALE', 'FEMALE', 'OTHER'], {
+    errorMap: () => ({ message: 'Choose the patient’s gender' }),
+  }),
+  mobile: z
+    .string({ required_error: 'Enter the patient’s mobile number' })
+    .trim()
+    .regex(/^0\d{10}$/u, 'Enter a valid 11-digit mobile (e.g. 03001234567)'),
+});
+
 export const bookVisitSchema = z.object({
   patientId: z.string().min(1, 'Select or create a patient'),
   testIds: z.array(z.string().min(1)).default([]),
@@ -119,8 +141,12 @@ export const bookVisitSchema = z.object({
 });
 export type BookVisitInput = z.infer<typeof bookVisitSchema>;
 
-/** Correcting who a slip belongs to. Changes the patient record itself. */
-export const slipPatientSchema = patientCreateSchema.pick({
-  fullName: true, age: true, sex: true, mobile: true, address: true, cnic: true, dateOfBirth: true, ageUnit: true,
+/**
+ * Correcting who a slip belongs to. Changes the patient record itself, under
+ * the same four required facts as registering — a correction is exactly when an
+ * old record missing its mobile or age gets them filled in.
+ */
+export const slipPatientSchema = newPatientSchema.pick({
+  fullName: true, age: true, sex: true, mobile: true, address: true, cnic: true, email: true, dateOfBirth: true, ageUnit: true,
 });
 export type SlipPatientInput = z.infer<typeof slipPatientSchema>;

@@ -35,7 +35,7 @@ export async function aiInterpretTestAction(orderLineId: string): Promise<Res> {
     if (!line) return { ok: false, error: 'Test not found.' };
     const p = line.visit.patient;
     const days = ageInDays(p as { dateOfBirth: Date | null; age: number | null; ageUnit: AgeUnit | null });
-    const previous = await labService.previousResults(line.visit.patientId, line.id, line.test.parameters.map((x) => x.id));
+    const previous = await labService.previousResults(line.visit.patientId, line.visitId, line.test.parameters);
     const byParam = new Map(line.results.map((r) => [r.parameterId, r]));
     const rows = line.test.parameters.map((prm) => {
       const r = byParam.get(prm.id);

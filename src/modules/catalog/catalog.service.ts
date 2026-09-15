@@ -1,4 +1,5 @@
 import { tenantDb } from '@/core/db/context';
+import { searchTests } from './search-rank';
 
 export interface TestListItem {
   id: string;
@@ -36,26 +37,15 @@ async function groupPrices(rateGroupId: string | null | undefined, testIds: stri
  *  for tests it lists. Read-only catalog access shared across modules. */
 export async function listTests(branchId: string | null, query?: string, rateGroupId?: string | null): Promise<TestListItem[]> {
   const tests = await (await tenantDb()).test.findMany({
-    where: {
-      isActive: true,
-      ...(query
-        ? {
-            OR: [
-              // NOTE: case-insensitive on SQLite (LIKE) by default. For Postgres,
-              // add a citext column or ILIKE for case-insensitive name search.
-              { name: { contains: query } },
-              { code: { contains: query } },
-            ],
-          }
-        : {}),
-    },
+    where: { isActive: true },
     include: { department: true, prices: true },
     orderBy: { name: 'asc' },
-    take: 50,
   });
-  const group = await groupPrices(rateGroupId, tests.map((t) => t.id));
+  // Ranked in memory: case-insensitive on every database, code and initials first.
+  const matched = query ? searchTests(tests, query) : tests.slice(0, 50);
+  const group = await groupPrices(rateGroupId, matched.map((t) => t.id));
 
-  return tests.map((t) => ({
+  return matched.map((t) => ({
     id: t.id,
     code: t.code,
     name: t.name,

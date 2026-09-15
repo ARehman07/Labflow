@@ -1,3 +1,4 @@
+import { assertLabWritable } from '@/core/billing/access.server';
 import { getFeatures } from '@/core/features/features.server';
 import { SAMPLE_SOURCE_FEATURES } from '@/core/features/catalog';
 import type { SlipPatientInput } from './reception.schema';
@@ -91,6 +92,8 @@ export const receptionService = {
     input: BookVisitInput,
     ctx: { userId: string; branchId: string },
   ): Promise<{ visitId: string }> {
+    // Also reached from the partner portal, which a lapsed subscription must stop too.
+    await assertLabWritable(await currentTenantId());
     const db0 = await tenantDb();
     // What this lab has switched off is refused here as well as hidden on screen.
     const features = await getFeatures();
@@ -704,14 +707,21 @@ export const receptionService = {
     const visit = await db.visit.findUnique({ where: { id: visitId }, include: { patient: true } });
     if (!visit) throw new Error('Slip not found');
     const p = visit.patient;
+    // The form no longer asks for a date of birth. One already on file is kept
+    // while the age is left as it was, and dropped once someone types a
+    // different age — otherwise the stored birthday would silently win over
+    // the correction.
+    const ageUnchanged = input.age === p.age && input.ageUnit === p.ageUnit;
+    const dateOfBirth = input.dateOfBirth ?? (ageUnchanged ? p.dateOfBirth : null);
     const derived = input.dateOfBirth ? ageFromDob(input.dateOfBirth) : null;
     const data = {
       fullName: input.fullName.trim(),
       mobile: input.mobile ?? null,
       cnic: input.cnic ?? null,
+      email: input.email ?? null,
       sex: input.sex ?? null,
       address: input.address?.trim() || null,
-      dateOfBirth: input.dateOfBirth ?? null,
+      dateOfBirth,
       age: derived ? derived.age : input.age ?? null,
       ageUnit: derived ? derived.unit : input.ageUnit,
     };
@@ -721,7 +731,7 @@ export const receptionService = {
       await tx.auditLog.create({
         data: {
           tenantId, actorId: userId, entity: 'Patient', entityId: p.id, action: 'PATIENT_UPDATE',
-          before: JSON.stringify({ fullName: p.fullName, mobile: p.mobile, cnic: p.cnic, sex: p.sex, address: p.address, dateOfBirth: p.dateOfBirth, age: p.age, ageUnit: p.ageUnit }),
+          before: JSON.stringify({ fullName: p.fullName, mobile: p.mobile, cnic: p.cnic, email: p.email, sex: p.sex, address: p.address, dateOfBirth: p.dateOfBirth, age: p.age, ageUnit: p.ageUnit }),
           after: JSON.stringify({ ...data, fromSlip: visit.slipNo }),
         },
       });

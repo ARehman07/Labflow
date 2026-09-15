@@ -16,6 +16,8 @@ export const labPolicySchema = z.object({
   refundWindowHours: z.coerce.number().int('Must be a whole number').min(0, 'Cannot be negative').max(8760, 'At most a year'),
   reportHistoryColumns: z.coerce.number().int('Must be a whole number').min(1, 'Show at least one').max(6, 'At most 6 fit on a page'),
   reportHistoryByDefault: z.coerce.boolean(),
+  /** How far back report history looks. 0 means no limit. */
+  reportHistoryMonths: z.coerce.number().int('Must be a whole number').min(0, 'Cannot be negative').max(120, 'At most 10 years'),
 });
 export type LabPolicyInput = z.infer<typeof labPolicySchema>;
 

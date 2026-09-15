@@ -13,41 +13,44 @@
    is why they were swept out of the components. */
 @theme {
   /* Semantic surfaces */
-  --color-canvas: #f6f7fb;
+  /* Light mode keeps a clear step between page and card: a cool grey-blue
+     canvas under pure-white cards, with tinted rather than near-white fills
+     inside them, so sections separate without leaning on hairlines alone. */
+  --color-canvas: #eceff5;
   --color-surface: #ffffff;
-  --color-surface-2: #f8fafc;
-  --color-surface-3: #f1f5f9;
-  --color-surface-inset: #f8fafc;
+  --color-surface-2: #f3f5f9;
+  --color-surface-3: #e7ebf2;
+  --color-surface-inset: #f3f5f9;
 
   /* Segmented controls: a recessed track with one raised thumb. Two tokens
      rather than reusing surface-2/3, because the relationship has to survive
      the theme flip — in light the track sinks below the card, in dark the
      thumb has to LIFT above it. A single pair of greys cannot do both. */
-  --color-segment-track: #eceff5;
+  --color-segment-track: #e1e6ee;
   --color-segment-thumb: #ffffff;
 
   /* Semantic lines */
-  --color-line: #e2e8f0;
-  --color-line-strong: #cbd5e1;
+  --color-line: #d9dfe8;
+  --color-line-strong: #bfc8d6;
 
   /* Semantic text */
   --color-strong: #0f172a;
   --color-body: #334155;
   --color-muted: #64748b;
-  --color-subtle: #94a3b8;
+  --color-subtle: #7c8799;
 
   /* Semantic feedback — soft fill + readable text, both themes */
-  --color-danger-soft: #fef2f2;
-  --color-danger-line: #fecaca;
+  --color-danger-soft: #fde8e8;
+  --color-danger-line: #f8b4b4;
   --color-danger-text: #b91c1c;
-  --color-warn-soft: #fffbeb;
-  --color-warn-line: #fde68a;
-  --color-warn-text: #92400e;
-  --color-ok-soft: #ecfdf5;
-  --color-ok-line: #a7f3d0;
-  --color-ok-text: #065f46;
-  --color-info-soft: #eff6ff;
-  --color-info-line: #bfdbfe;
+  --color-warn-soft: #fdf1d8;
+  --color-warn-line: #f6d488;
+  --color-warn-text: #8a3c0a;
+  --color-ok-soft: #e0f5eb;
+  --color-ok-line: #98e0bd;
+  --color-ok-text: #05603f;
+  --color-info-soft: #e4edfd;
+  --color-info-line: #b2cbf8;
   --color-info-text: #1d4ed8;
 
   /* Brand — indigo / iris (LabFlow Nova) */
@@ -95,7 +98,7 @@
   --radius-2xl: 1.125rem;
 
   /* Shadows */
-  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.06), 0 2px 6px -1px rgb(15 23 42 / 0.08);
   --shadow-card-hover: 0 12px 28px -8px rgb(30 27 75 / 0.16), 0 2px 8px -2px rgb(30 27 75 / 0.08);
   --shadow-dropdown: 0 12px 32px -8px rgb(15 23 42 / 0.22), 0 4px 12px -4px rgb(15 23 42 / 0.12);
   --shadow-glow: 0 0 0 4px rgb(99 102 241 / 0.14);
@@ -503,4 +506,12 @@ html[dir='rtl'] .btn {
     background: #fff;
     margin: 0 !important;
   }
+}
+
+/* Lab board queue token: a paper ticket with a notch cut from each side. */
+.ticket-notch {
+  -webkit-mask: radial-gradient(circle 4px at 0 50%, #0000 97%, #000) left / 51% 100% no-repeat,
+    radial-gradient(circle 4px at 100% 50%, #0000 97%, #000) right / 51% 100% no-repeat;
+  mask: radial-gradient(circle 4px at 0 50%, #0000 97%, #000) left / 51% 100% no-repeat,
+    radial-gradient(circle 4px at 100% 50%, #0000 97%, #000) right / 51% 100% no-repeat;
 }

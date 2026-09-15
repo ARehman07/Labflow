@@ -2,7 +2,7 @@
 
 import { useFeatures } from '@/core/features/FeaturesProvider';import Link from 'next/link';
 import {
-  Cpu, FileText, FlaskConical, KeyRound, ToggleRight, Layers, MessageSquareText, Plug, MapPin, MapPinned, Package, Pill, Scale, ShieldCheck, Stamp, Stethoscope, Tags, Users, Wallet, type LucideIcon,
+  CreditCard, Cpu, FileText, FlaskConical, KeyRound, ToggleRight, Layers, MessageSquareText, Plug, MapPin, MapPinned, Package, Pill, Scale, ShieldCheck, Stamp, Stethoscope, Tags, Users, Wallet, type LucideIcon,
 } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -27,6 +27,7 @@ export function AdminHome({ manage, users, settings }: { manage: boolean; users:
       {settings && (
         <Group title={t('admin.groupPolicy')}>
           <Tile href="/admin/features" icon={ToggleRight} titleKey="admin.features" descKey="admin.featuresDesc" />
+          <Tile href="/subscription" icon={CreditCard} titleKey="admin.subscription" descKey="admin.subscriptionDesc" />
           <Tile href="/admin/policy" icon={Scale} titleKey="admin.policy" descKey="admin.policyDesc" />
           <Tile href="/admin/letterhead" icon={Stamp} titleKey="admin.letterhead" descKey="admin.letterheadDesc" />
           <Tile href="/admin/messages" icon={MessageSquareText} titleKey="admin.messages" descKey="admin.messagesDesc" />

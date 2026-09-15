@@ -74,6 +74,8 @@ export async function createStaffAction(
 
   const clash = await db.user.findFirst({ where: { username: parsed.data.username }, select: { id: true } });
   if (clash) return { ok: false, error: `The username "${parsed.data.username}" is already taken.` };
+  const overCap = await staffCapMessage(db, tenantId);
+  if (overCap) return { ok: false, error: overCap };
 
   const tempPassword = temporaryPassword();
   const user = await db.user.create({
@@ -137,6 +139,10 @@ export async function setStaffActiveAction(
     select: { id: true, role: { select: { name: true, permissions: { select: { permission: { select: { code: true } } } } } } },
   });
   if (!user) return { ok: false, error: 'User not found.' };
+  if (isActive) {
+    const overCap = await staffCapMessage(db, tenantId, userId);
+    if (overCap) return { ok: false, error: overCap };
+  }
 
   // Never leave the lab with nobody who can manage users.
   if (!isActive) {
@@ -158,4 +164,16 @@ export async function setStaffActiveAction(
       action: isActive ? 'USER_ACTIVATE' : 'USER_DEACTIVATE' },
   });
   return { ok: true };
+}
+
+/** The plan's limit on active staff accounts, as a message when this would go past it. Portal logins do not count. */
+async function staffCapMessage(db: Awaited<ReturnType<typeof tenantDb>>, tenantId: string, exceptUserId?: string): Promise<string | null> {
+  const lab = await db.tenant.findUnique({ where: { id: tenantId }, select: { maxUsers: true } });
+  if (lab?.maxUsers == null) return null;
+  const active = await db.user.count({
+    where: { isActive: true, partnerLabId: null, doctorId: null, ...(exceptUserId ? { id: { not: exceptUserId } } : {}) },
+  });
+  return active >= lab.maxUsers
+    ? `Your LabFlow plan allows ${lab.maxUsers} active staff accounts. Switch off an account nobody uses, or ask LabFlow to raise the limit.`
+    : null;
 }

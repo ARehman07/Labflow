@@ -7,5 +7,6 @@ export const dynamic = 'force-dynamic';
 
 export default async function FeaturesPage() {
   if (!(await can('settings.manage'))) return <AccessDenied area="admin" />;
-  return <FeaturesClient initial={await getLabFeaturesAction()} />;
+  const { features, locked } = await getLabFeaturesAction();
+  return <FeaturesClient initial={features} locked={locked} />;
 }

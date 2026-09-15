@@ -13,7 +13,7 @@ import { Button } from './Button';
  * a tab with unsaved changes is closed or reloaded.
  */
 export function SaveBar({
-  dirty, saving, onSave, onDiscard, saveLabel, note, disabled, extra,
+  dirty, saving, onSave, onDiscard, saveLabel, note, disabled, extra, alert,
 }: {
   dirty: boolean;
   saving: boolean;
@@ -26,6 +26,12 @@ export function SaveBar({
   disabled?: boolean;
   /** A second action beside Save, e.g. "Save & next". */
   extra?: ReactNode;
+  /**
+   * A warning that must stay in view while the form is worked on. It lives in
+   * this pinned bar rather than above the form, so appearing never pushes the
+   * fields being typed into.
+   */
+  alert?: ReactNode;
 }) {
   const { t } = useI18n();
 
@@ -38,6 +44,7 @@ export function SaveBar({
 
   return (
     <div className="no-print sticky bottom-24 z-10 md:bottom-3 mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface/95 p-3 shadow-dropdown backdrop-blur">
+      {alert && <div className="basis-full">{alert}</div>}
       <Button onClick={onSave} loading={saving} disabled={!dirty || disabled}>
         {saveLabel}
       </Button>

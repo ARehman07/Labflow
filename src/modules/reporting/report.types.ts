@@ -14,6 +14,8 @@ export interface ReportParam {
   /** This patient's earlier released values, one per column in ReportTest.history (newest first). */
   previous: (string | null)[];
   previousFlags: (string | null)[];
+  /** The unit an earlier value was recorded in, only where it differs from today's. */
+  previousUnits: (string | null)[];
   /** Direction against the most recent earlier value, when both are numbers. */
   trend: 'UP' | 'DOWN' | 'SAME' | null;
 }
@@ -30,7 +32,7 @@ export interface ReportTest {
   department: string;
   approvedBy: string | null;
   params: ReportParam[];
-  /** Earlier visits where this test was released for the same patient (MR#), newest first, at most three. */
+  /** Earlier visits with a released value for something on this test (matched by analyte), newest first, at most the lab's limit. */
   history: HistoryColumn[];
   /** How the test is done — analyzer, method, reagent — printed under the results. */
   methodNote: string | null;

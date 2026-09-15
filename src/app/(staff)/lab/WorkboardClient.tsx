@@ -1,10 +1,12 @@
 'use client';
 
-import { useFeatures } from '@/core/features/FeaturesProvider';import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useFeatures } from '@/core/features/FeaturesProvider';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import {
-  Search, Droplet, PencilLine, Eye, Printer, PackageCheck, AlertTriangle, Clock, Megaphone, MessageSquareText, RotateCcw, Send, SlidersHorizontal, Ticket, Undo2, X, type LucideIcon,
+  Search, Droplet, PencilLine, Eye, Printer, PackageCheck, AlertTriangle, Clock, Megaphone, MessageSquareText, MoreHorizontal, RotateCcw, Send, SlidersHorizontal, Tag, FileText, Undo2, X, type LucideIcon,
 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
 import { Select } from '@/components/ui/Select';
@@ -12,7 +14,7 @@ import { listOutwardPartnersAction } from '@/modules/partners/partners.actions';
 import { getQueueAction, callNextAction, type QueueTokenRow } from '@/modules/queue/queue.actions';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button } from '@/components/ui/Button';
-import { ACCENT, SectionHeading, HeadingAction, RailGroup, RowList, Row, type Accent } from '@/components/ui/List';
+import { ACCENT, type Accent } from '@/components/ui/List';
 import { cn } from '@/lib/utils';
 import {
   getWorkboardAction,
@@ -28,7 +30,6 @@ import {
   type WorkLineDTO,
 } from '@/modules/lab/lab.actions';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Tag } from 'lucide-react';
 
 /**
  * One card per patient, all of their tests inside it.
@@ -275,29 +276,30 @@ export function WorkboardClient() {
         title={t('lab.title')}
         actions={
           <>
-            {queue && (serving || waitingTokens > 0) && (
-              // The waiting room sits beside the title: calling the next patient in
-              // is the first thing done at the bench, before any card is touched.
-              <div className="flex w-full min-w-0 items-center gap-3 rounded-2xl border border-line bg-surface p-1.5 shadow-card sm:w-auto">
-                <span className="grid h-9 min-w-9 shrink-0 place-items-center rounded-xl bg-brand-600 px-2 font-mono text-lg font-black tabular-nums text-white">
-                  {serving ? serving.number : '—'}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-subtle">{t('lab.nowServing')}</div>
-                  <div className="truncate text-sm font-semibold text-strong sm:max-w-52">
-                    {serving ? serving.patientName : t('lab.nobodyCalled')}
-                    <span className="font-normal text-muted">
-                      {' · '}
-                      {nextToken && `${t('lab.upNext').replace('{n}', String(nextToken.number))} · `}
-                      {t('lab.waitingN').replace('{n}', String(waitingTokens))}
-                    </span>
-                  </div>
+            {/* The waiting room sits beside the title: calling the next patient in
+                is the first thing done at the bench, before any card is touched.
+                Always drawn, at a fixed width: it used to appear after the first
+                fetch and come and go with the poll, shoving the search box, the
+                filter bar and every card. Empty, it just says nobody is waiting. */}
+            <div className="flex w-full min-w-0 items-center gap-3 rounded-2xl border border-line bg-surface p-1.5 shadow-card sm:w-[26rem]">
+              <span className="grid h-9 min-w-9 shrink-0 place-items-center rounded-xl bg-brand-600 px-2 font-mono text-lg font-black tabular-nums text-white">
+                {serving ? serving.number : '—'}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-subtle">{t('lab.nowServing')}</div>
+                <div className="truncate text-sm font-semibold text-strong">
+                  {serving ? serving.patientName : t('lab.nobodyCalled')}
+                  <span className="font-normal text-muted">
+                    {' · '}
+                    {nextToken && `${t('lab.upNext').replace('{n}', String(nextToken.number))} · `}
+                    {waitingTokens === 0 ? t('queue.noneWaiting') : t('lab.waitingN').replace('{n}', String(waitingTokens))}
+                  </span>
                 </div>
-                <Button size="sm" className="shrink-0" onClick={callNext} loading={calling} disabled={waitingTokens === 0}>
-                  <Megaphone className="h-4 w-4" /> {t('lab.callNext')}
-                </Button>
               </div>
-)}
+              <Button size="sm" className="shrink-0" onClick={callNext} loading={calling} disabled={!queue || waitingTokens === 0}>
+                <Megaphone className="h-4 w-4" /> {t('lab.callNext')}
+              </Button>
+            </div>
             <div className="relative w-full sm:w-60">
               <Search className="pointer-events-none absolute inset-y-0 start-0 my-auto ms-3.5 h-4 w-4 text-subtle" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('lab.search')} aria-label={t('lab.search')} className="field ps-10" />
@@ -309,9 +311,9 @@ export function WorkboardClient() {
       {/* One sticky bar for narrowing the work: which stage, and any extra filters.
           It stays put while the cards scroll, so switching stage never means
           scrolling back to the top. */}
-      <div className="sticky top-[66px] z-10 -mx-2 flex flex-wrap items-center gap-2 bg-canvas/90 px-2 py-2 backdrop-blur-md">
-        {/* Phones swipe the chips sideways; a wrapped stack would fill the screen once it sticks. */}
-        <div className="-my-1 flex min-w-0 flex-1 gap-2 no-scrollbar overflow-x-auto py-1 sm:flex-wrap sm:overflow-visible">
+      <div className="sticky top-[66px] z-10 -mx-2 flex items-center gap-2 bg-canvas/90 px-2 py-2 backdrop-blur-md">
+        {/* One line at every width: narrow screens swipe the chips sideways rather than stacking them. */}
+        <div className="-my-1 flex min-w-0 flex-1 gap-1.5 no-scrollbar overflow-x-auto py-1">
           <FilterChip
             label={t('lab.filterAll')} patients={counts.patients.ALL} tests={counts.tests.ALL}
             active={filter === 'ALL'} onClick={() => setFilter('ALL')}
@@ -326,8 +328,8 @@ export function WorkboardClient() {
           ))}
         </div>
         <div className="ms-auto shrink-0">
-          <Button variant={activeFilters > 0 ? 'primary' : 'outline'} onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen} aria-label={t('lab.filters')} title={t('lab.filters')}>
-            <SlidersHorizontal className="h-4 w-4" />
+          <Button size="sm" variant={activeFilters > 0 ? 'primary' : 'outline'} onClick={() => setFiltersOpen((o) => !o)} aria-expanded={filtersOpen} aria-label={t('lab.filters')} title={t('lab.filters')}>
+            <SlidersHorizontal className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">{t('lab.filters')}</span>
             {activeFilters > 0 && ` (${activeFilters})`}
           </Button>
@@ -417,44 +419,53 @@ function useColumnCount() {
 function estimateCardHeight(v: WorkVisitDTO): number {
   const stages = new Set(v.lines.map((l) => stageOf(l.status).key)).size;
   const lineExtras = v.lines.reduce((h, l) => h
-    + (l.bookingRemarks ? 18 : 0) + (l.delayReason ? 18 : 0) + (l.outsourcedTo ? 18 : 0)
-    + (isOverdue(l) || RETAKEABLE.has(l.status) ? 22 : 0), 0);
-  return 90 + (v.notes ? 20 + Math.ceil(v.notes.length / 60) * 18 : 0)
-    + stages * 40 + v.lines.length * 48 + lineExtras;
+    + (l.bookingRemarks ? 18 : 0) + (l.delayReason ? 18 : 0) + (l.outsourcedTo ? 18 : 0), 0);
+  const signals = v.notes || v.lines.some(isOverdue) ? 30 + Math.ceil((v.notes?.length ?? 0) / 60) * 16 : 0;
+  return 150 + (v.token?.status === 'CALLED' ? 28 : 0) + signals
+    + (stages > 1 ? stages * 26 : 0) + v.lines.length * 50 + lineExtras;
 }
 
 function FilterChip({
   label, patients, tests, dot, active, onClick,
 }: { label: string; patients: number; tests: number; dot?: string; active: boolean; onClick: () => void }) {
   const { t } = useI18n();
+  // One number on the chip — patients, which is how many cards the filter shows.
+  // The test count is still a hover away, rather than a second figure beside it.
   const patientsText = patients === 1 ? t('lab.onePatient') : t('lab.patientsN').replace('{n}', String(patients));
   const testsText = tests === 1 ? t('lab.oneTest') : t('lab.testsN').replace('{n}', String(tests));
   return (
     <button
+      type="button"
       onClick={onClick}
       aria-pressed={active}
       title={`${patientsText} · ${testsText}`}
       className={cn(
-        'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-sm font-semibold transition-all',
+        // Hover darkens the chip a step rather than tinting the text, so the label
+        // stays as readable while the pointer is on it as before.
+        'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas',
         active
-          ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
-          : 'border-line bg-surface text-muted hover:border-brand-300 hover:text-brand-600',
+          ? 'border-brand-600 bg-brand-600 text-white shadow-sm hover:border-brand-700 hover:bg-brand-700'
+          : 'border-line bg-surface text-body hover:border-line-strong hover:bg-surface-2 hover:text-strong',
       )}
     >
-      {dot && <span className={cn('h-2 w-2 rounded-full', active ? 'bg-white/80' : dot)} />}
+      {dot && <span className={cn('h-1.5 w-1.5 rounded-full', active ? 'bg-white' : dot)} />}
       {label}
-      <span className={cn('rounded-full px-1.5 text-xs tabular-nums', active ? 'bg-white/20' : 'bg-surface-3 text-body')}>
+      <span className={cn('min-w-4 rounded-full px-1.5 text-center text-[10.5px] leading-4 tabular-nums', active ? 'bg-white/25 text-white' : 'bg-surface-3 text-strong')}>
         {patients}
       </span>
-      {tests !== patients && (
-        <span className={cn('text-xs font-medium tabular-nums', active ? 'text-white/80' : 'text-subtle')}>
-          · {testsText}
-        </span>
-      )}
     </button>
   );
 }
 
+/**
+ * The patient card reads top to bottom as four questions: who is this, does
+ * anything need attention, is there something to do for the whole patient
+ * (collect every tube, open the finished report), and where does each test
+ * stand. Every test carries its own action in the same place on its row, so
+ * the card has one shape whether it holds one test or ten; the rarer row
+ * actions sit behind that row's ⋯ menu.
+ */
 function PatientCard({
   visit, onAdvance, onCollectAll, onUndo, onRetake, onDelay,
 }: {
@@ -467,6 +478,13 @@ function PatientCard({
 }) {
   const { t } = useI18n();
   const overdueCount = visit.lines.filter(isOverdue).length;
+  const called = visit.token?.status === 'CALLED';
+  const step = useMemo(() => nextStep(visit), [visit]);
+  // Menus open over the page, outside the card, so moving onto one used to
+  // count as leaving the card and it dropped back mid-choice. While any of this
+  // card's menus is open it stays lifted as if still hovered.
+  const [menusOpen, setMenusOpen] = useState(0);
+  const holdLift = useCallback((open: boolean) => setMenusOpen((n) => Math.max(0, n + (open ? 1 : -1))), []);
 
   // Tests bucketed by stage, in workflow order, empty buckets dropped.
   const groups = useMemo(
@@ -476,137 +494,372 @@ function PatientCard({
     [visit.lines],
   );
 
+  const ageSex = [
+    visit.age != null ? `${visit.age} ${t('common.years')}` : null,
+    visit.sex ? t(`reception.${visit.sex.toLowerCase()}`) : null,
+  ].filter(Boolean).join(' · ');
+
+  const cardMenu: MenuItem[] = [
+    ...(visit.lines.some((l) => l.status !== 'CANCELLED')
+      ? [{ key: 'labels', label: t('labels.print'), icon: Tag, href: `/lab/labels/${visit.id}` }]
+      : []),
+    { key: 'slip', label: t('lab.openSlip'), icon: FileText, href: `/reception/${visit.id}` },
+    ...(visit.lines.some((l) => READY.has(l.status))
+      ? [{ key: 'report', label: t('lab.openReport'), icon: Printer, href: `/lab/report/${visit.id}` }]
+      : []),
+  ];
+
   return (
+    <CardHoldContext.Provider value={holdLift}>
     <article
       aria-labelledby={`patient-${visit.id}`}
-      className={cn('card card-hover space-y-4 p-4', visit.token?.status === 'CALLED' && 'ring-2 ring-brand-500')}
+      className={cn('card card-hover overflow-hidden', menusOpen > 0 && '-translate-y-0.5 shadow-card-hover', called && 'ring-2 ring-brand-500/60')}
     >
-      {/* Header — who this is, and how much work, in one plain line. No rule
-          underneath it; the gap does that job more quietly. */}
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-bold text-white">
-          {visit.patientName.slice(0, 1).toUpperCase()}
+      {/* Called is said once, in words, across the top — not squeezed into a pill beside the name. */}
+      {called && (
+        <div className="flex items-center gap-2 bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white">
+          <span className="relative flex h-2 w-2" aria-hidden>
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70 motion-reduce:animate-none" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
+          </span>
+          {t('lab.nowCalling')}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-2">
-            <h2 id={`patient-${visit.id}`} className="truncate font-semibold text-strong">{visit.patientName}</h2>
-            <span className="flex shrink-0 items-center gap-2">
-              {visit.token && (
-                <span
-                  title={t('queue.token')}
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums',
-                    visit.token.status === 'CALLED' ? 'bg-brand-600 text-white' : 'bg-surface-3 text-body',
-                  )}
-                >
-                  <Ticket className="h-3 w-3" />
-                  {visit.token.status === 'CALLED' && <span>{t('lab.calling')}</span>}
-                  {visit.token.number}
-                </span>
-              )}
-              {/* Once a tube is drawn it needs a label before it leaves the chair. */}
-              {visit.hasSamples && (
-                <Link
-                  href={`/lab/labels/${visit.id}`}
-                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-brand-600 transition-colors hover:bg-brand-500/10 dark:text-brand-300"
-                >
-                  <Tag className="h-3 w-3" /> {t('labels.print')}
-                </Link>
-              )}
-              <span className="font-mono text-[11px] font-semibold tabular-nums text-subtle">#{visit.slipNo}</span>
-            </span>
+      )}
+
+      <div className="space-y-3 p-4">
+        <div className="flex items-center gap-3">
+          {visit.token
+            ? <TokenTicket number={visit.token.number} called={called} />
+            : (
+              <div aria-hidden className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand-500/10 text-sm font-bold text-brand-700 dark:text-brand-300">
+                {initials(visit.patientName)}
+              </div>
+            )}
+          <div className="min-w-0 flex-1">
+            <h2 id={`patient-${visit.id}`} className="break-words font-semibold leading-snug text-strong">{visit.patientName}</h2>
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-subtle">
+              <span className="font-mono tabular-nums">{visit.mrNo}</span>
+              {ageSex && <><span aria-hidden className="text-line-strong">·</span><span>{ageSex}</span></>}
+              <span aria-hidden className="text-line-strong">·</span>
+              <span className="font-mono tabular-nums">{t('lab.slipNo').replace('{n}', visit.slipNo)}</span>
+            </div>
           </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-subtle">
-            <span className="truncate">
-              {visit.mrNo}
-              {visit.age != null && ` · ${visit.age}${t('common.years')}`}
-              {visit.sex && ` · ${t(`reception.${visit.sex.toLowerCase()}`)}`}
-            </span>
-            <span aria-hidden>·</span>
-            <span>{visit.lines.length} {t(visit.lines.length === 1 ? 'lab.test' : 'lab.tests')}</span>
+          <ActionMenu label={t('lab.cardActions')} items={cardMenu} />
+        </div>
+
+        {(overdueCount > 0 || visit.notes) && (
+          <div className="flex flex-wrap gap-1.5">
             {overdueCount > 0 && (
-              <span className="font-semibold text-danger-text">
-                · {t('lab.nLate').replace('{n}', String(overdueCount))}
+              <span className="inline-flex items-center gap-1 rounded-md bg-danger-soft px-2 py-0.5 text-xs font-semibold text-danger-text">
+                <Clock className="h-3 w-3" /> {t('lab.nTestsLate').replace('{n}', String(overdueCount))}
+              </span>
+            )}
+            {visit.notes && (
+              <span className="inline-flex max-w-full items-start gap-1.5 rounded-md bg-info-soft px-2 py-0.5 text-xs text-info-text">
+                <MessageSquareText className="mt-0.5 h-3 w-3 shrink-0" aria-label={t('reception.notes')} />
+                <span className="min-w-0 whitespace-pre-wrap break-words">{visit.notes}</span>
               </span>
             )}
           </div>
+        )}
+
+        <NextStepBand visitId={visit.id} step={step} onCollectAll={onCollectAll} />
+
+        <div>
+          {groups.map((g) => (
+            <section key={g.stage.key} aria-label={t(g.stage.labelKey)}>
+              {/* A heading only earns its place when the tests are spread over stages. */}
+              {groups.length > 1 && (
+                <h3 className="flex items-center gap-1.5 pb-0.5 pt-3 text-[10.5px] font-bold uppercase tracking-wider text-subtle">
+                  <span className={cn('h-1.5 w-1.5 rounded-full', g.stage.accent.dot)} />
+                  {t(g.stage.labelKey)}
+                  <span className="tabular-nums text-muted">{g.lines.length}</span>
+                </h3>
+              )}
+              <ul className="divide-y divide-line">
+                {g.lines.map((l) => (
+                  <TestRow
+                    key={l.id}
+                    line={l}
+                    visitId={visit.id}
+                    onAdvance={onAdvance}
+                    onUndo={onUndo}
+                    onRetake={onRetake}
+                    onDelay={onDelay}
+                  />
+                ))}
+              </ul>
+            </section>
+          ))}
         </div>
       </div>
-
-      {visit.notes && (
-        <p className="flex items-start gap-2 rounded-lg bg-info-soft px-3 py-2 text-xs text-info-text">
-          <MessageSquareText className="mt-px h-3.5 w-3.5 shrink-0" aria-label={t('reception.notes')} />
-          <span className="min-w-0 whitespace-pre-wrap break-words">{visit.notes}</span>
-        </p>
-      )}
-
-      {groups.map((g) => (
-        <StageGroup
-          key={g.stage.key}
-          stage={g.stage}
-          lines={g.lines}
-          visitId={visit.id}
-          onAdvance={onAdvance}
-          onCollectAll={onCollectAll}
-          onUndo={onUndo}
-          onRetake={onRetake}
-          onDelay={onDelay}
-        />
-      ))}
     </article>
+    </CardHoldContext.Provider>
   );
 }
 
-function StageGroup({
-  stage, lines, visitId, onAdvance, onCollectAll, onUndo, onRetake, onDelay,
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/u).filter(Boolean);
+  return ((parts[0]?.[0] ?? '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
+}
+
+/** The waiting-room token as a paper ticket, in the avatar's place so names line up down the board. */
+function TokenTicket({ number, called }: { number: number; called: boolean }) {
+  const { t } = useI18n();
+  return (
+    <div
+      aria-label={`${t('queue.token')} ${number}`}
+      className={cn(
+        'ticket-notch grid h-11 w-11 shrink-0 place-content-center justify-items-center gap-0.5 rounded-[9px] border',
+        called ? 'border-brand-600 bg-brand-600 text-white' : 'border-line bg-surface-2 text-strong',
+      )}
+    >
+      <span aria-hidden className={cn('text-[8px] font-bold uppercase leading-none tracking-[0.1em]', called ? 'text-white/75' : 'text-subtle')}>
+        {t('queue.token')}
+      </span>
+      <span aria-hidden className="font-mono text-[17px] font-bold leading-none tabular-nums">{number}</span>
+    </div>
+  );
+}
+
+/**
+ * Which tube or container a test is drawn into: a small tube with the cap
+ * colour phlebotomists already know, and the tube named in words on the row.
+ * It is deliberately shaped like a tube and never a dot, so it cannot be read
+ * as the stage colour that the headings use.
+ */
+const TUBE: Record<string, { cap: string; container?: boolean }> = {
+  BLOOD: { cap: 'bg-violet-400' },
+  SERUM: { cap: 'bg-amber-400' },
+  PLASMA: { cap: 'bg-sky-400' },
+  URINE: { cap: 'bg-amber-500', container: true },
+  STOOL: { cap: 'bg-orange-700', container: true },
+  SWAB: { cap: 'bg-teal-500', container: true },
+};
+
+function TubeMarker({ specimen, className }: { specimen: string; className?: string }) {
+  const { t } = useI18n();
+  const tube = TUBE[specimen];
+  const label = t(`tube.${specimen}`);
+  return (
+    <span role="img" aria-label={label} title={label} className={cn('inline-flex shrink-0 flex-col items-center', className)}>
+      <span className={cn('h-1.5 rounded-t-[2px]', tube?.container ? 'w-3.5' : 'w-2.5', tube?.cap ?? 'bg-line-strong')} />
+      <span
+        className={cn(
+          'border border-t-0 border-line-strong bg-surface',
+          tube?.container ? 'h-2.5 w-3.5 rounded-b-[3px]' : 'h-3.5 w-2 rounded-b-full',
+        )}
+      />
+    </span>
+  );
+}
+
+type NextStep =
+  | { kind: 'collectAll'; lines: WorkLineDTO[] }
+  | { kind: 'done' }
+  | { kind: 'none' };
+
+/**
+ * An action for the whole patient, when there is one. Anything a single test
+ * needs is on that test's row instead, so the band never takes a row's button.
+ */
+function nextStep(visit: WorkVisitDTO): NextStep {
+  const active = visit.lines.filter((l) => l.status !== 'CANCELLED');
+  const drawable = active.filter((l) => l.status === 'BOOKED');
+  if (drawable.length > 1) return { kind: 'collectAll', lines: drawable };
+  if (active.length > 0 && active.every((l) => READY.has(l.status))) return { kind: 'done' };
+  return { kind: 'none' };
+}
+
+function NextStepBand({
+  visitId, step, onCollectAll,
 }: {
-  stage: Stage;
-  lines: WorkLineDTO[];
   visitId: string;
-  onAdvance: (id: string, to: string) => void;
+  step: NextStep;
   onCollectAll: (ids: string[]) => void;
-  onUndo: (id: string) => void;
-  onRetake: ReasonHandler;
-  onDelay: ReasonHandler;
 }) {
   const { t } = useI18n();
+  if (step.kind === 'none') return null;
 
-  // The draw list lives in the heading of the group it belongs to, so every
-  // card has the same anatomy instead of some sprouting an extra strip.
-  const drawable = stage.key === 'COLLECT' ? lines : [];
-  const specimens = [...new Set(drawable.map((l) => l.specimenType))];
+  if (step.kind === 'done') {
+    return (
+      <div className="space-y-2 rounded-xl bg-ok-soft p-2.5">
+        <div className="text-[10.5px] font-bold uppercase tracking-wider text-ok-text">{t('lab.nextDone')}</div>
+        <Link href={`/lab/report/${visitId}`} className="block">
+          <Button variant="outline" className="w-full"><Printer className="h-4 w-4" /> {t('lab.openReport')}</Button>
+        </Link>
+      </div>
+    );
+  }
+
+  const specimens = [...new Set(step.lines.map((l) => l.specimenType))];
+  return (
+    <div className="space-y-2 rounded-xl bg-brand-500/10 p-2.5">
+      <div className="flex items-center justify-between gap-2 text-[10.5px] font-bold uppercase tracking-wider text-brand-700 dark:text-brand-300">
+        <span>{t('lab.nextStage').replace('{stage}', t('lab.filterCollect'))}</span>
+        <span className="flex items-end gap-1.5">{specimens.map((sp) => <TubeMarker key={sp} specimen={sp} />)}</span>
+      </div>
+      <Button className="w-full" onClick={() => onCollectAll(step.lines.map((l) => l.id))}>
+        <Droplet className="h-4 w-4" /> {t('lab.collectAllSamples').replace('{n}', String(step.lines.length))}
+      </Button>
+    </div>
+  );
+}
+
+interface MenuItem {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  href?: string;
+  onSelect?: () => void;
+  hint?: string;
+  /** Items sharing a group sit under one small heading, groups split by a rule. */
+  group?: string;
+}
+
+/**
+ * A ⋯ button with a small menu, portalled to <body> and placed position:fixed
+ * against the trigger. It cannot live inside the card: the card lifts on hover
+ * and the board animates in, and a transformed ancestor turns position:fixed
+ * into "relative to that ancestor" — the menu then opened inside the card's
+ * clipped box, out of sight.
+ */
+/** Lets a card stay lifted while a menu opened from inside it is showing. */
+const CardHoldContext = createContext<(open: boolean) => void>(() => {});
+
+function ActionMenu({ label, items }: { label: string; items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  // Opened with Enter or Space, focus goes to the first item so arrow keys work
+  // at once. Opened with the mouse, focus stays on the menu itself, so no item
+  // looks picked before the pointer reaches it.
+  const [viaKeyboard, setViaKeyboard] = useState(false);
+  const holdLift = useContext(CardHoldContext);
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const place = useCallback(() => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const below = window.innerHeight - r.bottom > 240 || window.innerHeight - r.bottom > r.top;
+    setPos({
+      top: below ? r.bottom + 4 : undefined,
+      bottom: below ? undefined : window.innerHeight - r.top + 4,
+      right: Math.max(8, window.innerWidth - r.right),
+    });
+  }, []);
+
+  useLayoutEffect(() => { if (open) place(); }, [open, place]);
+
+  useEffect(() => {
+    if (!open) return;
+    holdLift(true);
+    return () => holdLift(false);
+  }, [open, holdLift]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const n = e.target as Node;
+      if (!menuRef.current?.contains(n) && !btnRef.current?.contains(n)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOpen(false); btnRef.current?.focus(); }
+    };
+    const close = () => setOpen(false);
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !pos) return;
+    // preventScroll: focusing must not scroll the page, which would close the menu.
+    const target = viaKeyboard ? menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]') : menuRef.current;
+    target?.focus({ preventScroll: true });
+  }, [open, pos, viaKeyboard]);
+
+  if (items.length === 0) return null;
+
+  function onMenuKey(e: React.KeyboardEvent) {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const els = [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const i = els.indexOf(document.activeElement as HTMLElement);
+    // From the menu itself (opened by mouse), Down starts at the first item and Up at the last.
+    const next = i < 0 ? (e.key === 'ArrowDown' ? 0 : els.length - 1) : (i + (e.key === 'ArrowDown' ? 1 : -1) + els.length) % els.length;
+    els[next]?.focus({ preventScroll: true });
+  }
+
+  const itemCls = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-start text-sm text-body transition-colors hover:bg-surface-2 hover:text-strong focus:outline-none focus-visible:bg-surface-2 focus-visible:text-strong';
 
   return (
-    <section>
-      <SectionHeading
-        accent={stage.accent}
-        count={lines.length}
-        meta={specimens.length > 0
-          ? specimens.map((sp) => t(`specimen.${sp}`)).join(' · ')
-          : undefined}
-        action={drawable.length > 1 ? (
-          <HeadingAction onClick={() => onCollectAll(drawable.map((l) => l.id))}>
-            <Droplet className="h-3 w-3" />
-            {t('lab.collectAllN').replace('{n}', String(drawable.length))}
-          </HeadingAction>
-        ) : undefined}
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={label}
+        title={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        // detail is 0 when the click came from Enter or Space rather than a pointer.
+        onClick={(e) => { setViaKeyboard(e.detail === 0); setOpen((o) => !o); }}
+        className={cn(
+          'grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-transparent text-muted transition-colors hover:border-line hover:bg-surface-2 hover:text-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+          open && 'border-line bg-surface-2 text-strong',
+        )}
       >
-        {t(stage.labelKey)}
-      </SectionHeading>
-
-      <RailGroup accent={stage.accent}>
-        <RowList>
-          {lines.map((l) => (
-            <TestRow key={l.id} line={l} visitId={visitId} onAdvance={onAdvance} onUndo={onUndo} onRetake={onRetake} onDelay={onDelay} />
-          ))}
-        </RowList>
-      </RailGroup>
-    </section>
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={label}
+          tabIndex={-1}
+          onKeyDown={onMenuKey}
+          style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right, zIndex: 60 }}
+          className="min-w-52 max-w-[calc(100vw-16px)] rounded-xl border border-line bg-surface p-1 shadow-dropdown animate-scale-in focus:outline-none"
+        >
+          {items.map((it, i) => {
+            const newGroup = it.group !== items[i - 1]?.group;
+            const content = (
+              <>
+                <it.icon className="h-4 w-4 shrink-0 text-muted" />
+                <span className="flex-1">{it.label}</span>
+                {it.hint && <span className="text-xs text-subtle">{it.hint}</span>}
+              </>
+            );
+            return (
+              <div key={it.key}>
+                {newGroup && i > 0 && <div role="separator" className="mx-1 my-1 border-t border-line" />}
+                {newGroup && it.group && (
+                  <div className="px-2.5 pb-0.5 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-subtle">{it.group}</div>
+                )}
+                {it.href ? (
+                  <Link role="menuitem" href={it.href} className={itemCls} onClick={() => setOpen(false)}>{content}</Link>
+                ) : (
+                  <button role="menuitem" type="button" className={itemCls} onClick={() => { setOpen(false); it.onSelect?.(); }}>{content}</button>
+                )}
+              </div>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
 interface ActionCfg { labelKey: string; icon: LucideIcon; variant: 'primary' | 'outline' | 'ghost'; advanceTo?: string; href?: string }
-function lineAction(line: WorkLineDTO, visitId: string): ActionCfg | null {
+function lineAction(line: WorkLineDTO): ActionCfg | null {
   switch (line.status) {
     case 'BOOKED': return { labelKey: 'lab.collect', icon: Droplet, variant: 'primary', advanceTo: 'SAMPLE_COLLECTED' };
     case 'SAMPLE_DISPATCHED': return { labelKey: 'lab.receive', icon: PackageCheck, variant: 'primary', advanceTo: 'SAMPLE_RECEIVED' };
@@ -617,9 +870,8 @@ function lineAction(line: WorkLineDTO, visitId: string): ActionCfg | null {
     // A retake needs a fresh tube before anything can be entered.
     case 'RETAKE': return { labelKey: 'lab.recollect', icon: Droplet, variant: 'primary', advanceTo: 'SAMPLE_COLLECTED' };
     case 'RESULT_SAVED': return { labelKey: 'lab.review', icon: Eye, variant: 'outline', href: `/lab/result/${line.id}` };
-    case 'APPROVED':
-    case 'PRINTED':
-    case 'DELIVERED': return { labelKey: 'lab.report', icon: Printer, variant: 'ghost', href: `/lab/report/${visitId}` };
+    // Released tests have nothing left to do on the row; the report is for the
+    // whole patient and sits in the card's band and ⋯ menu.
     default: return null;
   }
 }
@@ -628,12 +880,8 @@ type ReasonHandler = (orderLineId: string, reason: string) => Promise<boolean>;
 
 const RETAKEABLE = new Set(['SAMPLE_COLLECTED', 'SAMPLE_RECEIVED', 'IN_PROGRESS']);
 
-// Secondary row actions: quiet text links so the one main action keeps the space.
-const SECONDARY =
-  'inline-flex items-center gap-1 rounded text-xs font-medium text-muted transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:hover:text-brand-300';
-
 function TestRow({
-  line, visitId, onAdvance, onUndo, onRetake, onDelay,
+  line, onAdvance, onUndo, onRetake, onDelay,
 }: {
   line: WorkLineDTO;
   visitId: string;
@@ -673,81 +921,92 @@ function TestRow({
     if (ok) { setAsking(null); setReason(''); }
   }
   const { t } = useI18n();
-  const cfg = lineAction(line, visitId);
+  const cfg = lineAction(line);
   const f = useFeatures();
   const overdue = isOverdue(line);
-  const collectedNoResults = line.status === 'SAMPLE_COLLECTED' && !line.hasResults;
-  const showSecondary = collectedNoResults || (!asking && ((f['lab.retake'] && RETAKEABLE.has(line.status) && !line.hasResults) || overdue));
+
+  // Everything besides the row's main action, grouped by what it is for.
+  const fix = t('lab.fixSample');
+  const route = t('lab.route');
+  const menu: MenuItem[] = [
+    // A mis-tapped Collect is put right here, while nothing depends on it.
+    ...(line.status === 'SAMPLE_COLLECTED' && !line.hasResults
+      ? [{ key: 'undo', group: fix, label: t('lab.undoCollectShort'), icon: Undo2, onSelect: () => onUndo(line.id) }]
+      : []),
+    ...(f['lab.retake'] && RETAKEABLE.has(line.status) && !line.hasResults
+      ? [{ key: 'retake', group: fix, label: `${t('lab.retake')}…`, hint: t('lab.asksWhy'), icon: RotateCcw, onSelect: () => { setAsking('RETAKE'); setReason(''); } }]
+      : []),
+    ...(f['lab.sendOut'] && line.status === 'SAMPLE_COLLECTED' && !line.hasResults
+      ? [{ key: 'send', group: route, label: `${t('lab.sendOut')}…`, icon: Send, onSelect: () => void openSendOut() }]
+      : []),
+    ...(overdue
+      ? [{ key: 'delay', group: route, label: `${t(line.delayReason ? 'lab.changeDelay' : 'lab.delay')}…`, hint: t('lab.asksWhy'), icon: Clock, onSelect: () => { setAsking('DELAY'); setReason(line.delayReason ?? ''); } }]
+      : []),
+  ];
 
   const btn = cfg && (
-    <Button variant={cfg.variant} size="sm" onClick={cfg.advanceTo ? () => onAdvance(line.id, cfg.advanceTo!) : undefined}>
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={cfg.advanceTo ? () => onAdvance(line.id, cfg.advanceTo!) : undefined}
+    >
       <cfg.icon className="h-3.5 w-3.5" /> {t(cfg.labelKey)}
     </Button>
   );
 
   return (
-    <Row className="flex-wrap">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-sm font-semibold text-body">{line.testName}</span>
-          {line.abnormal > 0 && (
-            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-danger-soft px-1.5 py-0.5 text-[10px] font-bold text-danger-text">
-              <AlertTriangle className="h-2.5 w-2.5" /> {line.abnormal}
-            </span>
-          )}
-        </div>
-        {/* Small print: the exact status (which is what decides the button) and,
-            when late, by how much rather than a bare OVERDUE stamp. */}
-        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-subtle">
-          <span className="truncate">{t(`status.${line.status}`)}</span>
-          {overdue && line.dueAt && (
-            <span className="shrink-0 font-semibold text-danger-text">
-              · {t('lab.lateBy').replace('{t}', lateBy(line.dueAt))}
-            </span>
-          )}
-        </div>
-        {showSecondary && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
-            {/* A mis-tapped Collect is put right here, while nothing depends on it. */}
-            {line.status === 'SAMPLE_COLLECTED' && !line.hasResults && (
-              <button type="button" className={SECONDARY} onClick={() => onUndo(line.id)} title={t('lab.undoCollect')}>
-                <Undo2 className="h-3.5 w-3.5" /> {t('lab.undo')}
-              </button>
-            )}
-            {f['lab.retake'] && !asking && RETAKEABLE.has(line.status) && !line.hasResults && (
-              <button type="button" className={SECONDARY} onClick={() => { setAsking('RETAKE'); setReason(''); }} title={t('lab.retakeReason')}>
-                <RotateCcw className="h-3.5 w-3.5" /> {t('lab.retake')}
-              </button>
-            )}
-            {f['lab.sendOut'] && !asking && line.status === 'SAMPLE_COLLECTED' && !line.hasResults && (
-              <button type="button" className={SECONDARY} onClick={() => void openSendOut()} title={t('lab.sendOutHint')}>
-                <Send className="h-3.5 w-3.5" /> {t('lab.sendOut')}
-              </button>
-            )}
-            {!asking && overdue && (
-              <button type="button" className={SECONDARY} onClick={() => { setAsking('DELAY'); setReason(line.delayReason ?? ''); }} title={t('lab.delayReason')}>
-                <Clock className="h-3.5 w-3.5" /> {t('lab.delay')}
-              </button>
+    <li className="py-2.5 last:pb-0">
+      <div className="flex items-start gap-2.5">
+        <TubeMarker specimen={line.specimenType} className="mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="break-words text-sm font-semibold text-strong">{line.testName}</span>
+            {line.abnormal > 0 && (
+              <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-danger-soft px-1.5 py-0.5 text-[10px] font-bold text-danger-text">
+                <AlertTriangle className="h-2.5 w-2.5" /> {line.abnormal}
+              </span>
             )}
           </div>
-        )}
-        {line.bookingRemarks && (
-          <div className="mt-0.5 truncate text-xs text-brand-700 dark:text-brand-300">{t('lab.bookingNote').replace('{note}', line.bookingRemarks)}</div>
-        )}
-        {line.delayReason && (
-          <div className="mt-0.5 truncate text-xs font-medium text-warn-text">{t('lab.delayed').replace('{reason}', line.delayReason)}</div>
-        )}
-        {line.outsourcedTo && (
-          <div className="mt-0.5 truncate text-xs font-medium text-info-text">{t('lab.sentTo').replace('{lab}', line.outsourcedTo)}</div>
+          {/* Small print: the exact status and, when late, by how much. */}
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-subtle">
+            <span>{t(`status.${line.status}`)}</span>
+            <span aria-hidden>·</span>
+            <span>{t(`tube.${line.specimenType}`)}</span>
+            {overdue && line.dueAt && (
+              <span className="font-semibold text-danger-text">· {t('lab.lateBy').replace('{t}', lateBy(line.dueAt))}</span>
+            )}
+          </div>
+          {line.bookingRemarks && (
+            <p className="mt-1 flex items-start gap-1.5 text-xs text-brand-700 dark:text-brand-300">
+              <MessageSquareText className="mt-0.5 h-3 w-3 shrink-0" />
+              <span className="min-w-0 break-words">{t('lab.bookingNote').replace('{note}', line.bookingRemarks)}</span>
+            </p>
+          )}
+          {line.delayReason && (
+            <p className="mt-1 flex items-start gap-1.5 text-xs font-medium text-warn-text">
+              <Clock className="mt-0.5 h-3 w-3 shrink-0" />
+              <span className="min-w-0 break-words">{t('lab.delayed').replace('{reason}', line.delayReason)}</span>
+            </p>
+          )}
+          {line.outsourcedTo && (
+            <p className="mt-1 flex items-start gap-1.5 text-xs font-medium text-info-text">
+              <Send className="mt-0.5 h-3 w-3 shrink-0" />
+              <span className="min-w-0 break-words">{t('lab.sentTo').replace('{lab}', line.outsourcedTo)}</span>
+            </p>
+          )}
+        </div>
+        {(btn || menu.length > 0) && (
+          <div className="flex shrink-0 items-center gap-0.5">
+            {cfg?.href ? <Link href={cfg.href}>{btn}</Link> : btn}
+            <ActionMenu label={t('lab.moreFor').replace('{test}', line.testName)} items={menu} />
+          </div>
         )}
       </div>
-      <div className="shrink-0">
-        {cfg?.href ? <Link href={cfg.href}>{btn}</Link> : btn}
-      </div>
+
       {asking && (
-        <div className="basis-full">
-          {asking === 'SEND' && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2 rounded-lg border border-line bg-surface-2 p-2.5 ms-5">
+          {asking === 'SEND' ? (
+            <div className="flex flex-wrap items-center gap-1.5">
               {refLabs.length === 0 ? (
                 <span className="text-xs text-warn-text">{t('lab.noRefLabs')}</span>
               ) : (
@@ -766,26 +1025,29 @@ function TestRow({
               )}
               <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>{t('common.cancel')}</Button>
             </div>
-          )}
-          {asking && asking !== 'SEND' && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <input
-                autoFocus
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void submitReason(); if (e.key === 'Escape') setAsking(null); }}
-                maxLength={200}
-                placeholder={asking === 'RETAKE' ? t('lab.retakeReason') : t('lab.delayReason')}
-                aria-label={asking === 'RETAKE' ? t('lab.retakeReason') : t('lab.delayReason')}
-                className="field min-w-40 flex-1 py-1.5 text-sm"
-              />
-              <Button size="sm" onClick={() => void submitReason()} loading={saving} disabled={!reason.trim()}>{t('lab.saveReason')}</Button>
-              <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>{t('common.cancel')}</Button>
+          ) : (
+            <div className="space-y-1.5">
+              <label htmlFor={`reason-${line.id}`} className="block text-xs font-semibold text-body">
+                {asking === 'RETAKE' ? t('lab.retakeReason') : t('lab.delayReason')}
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <input
+                  id={`reason-${line.id}`}
+                  autoFocus
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void submitReason(); if (e.key === 'Escape') setAsking(null); }}
+                  maxLength={200}
+                  className="field min-w-40 flex-1 py-1.5 text-sm"
+                />
+                <Button size="sm" onClick={() => void submitReason()} loading={saving} disabled={!reason.trim()}>{t('lab.saveReason')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setAsking(null)}>{t('common.cancel')}</Button>
+              </div>
             </div>
           )}
         </div>
       )}
-    </Row>
+    </li>
   );
 }
 

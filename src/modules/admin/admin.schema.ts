@@ -46,6 +46,14 @@ export type RangeInput = z.infer<typeof rangeSchema>;
 const parameterSchema = z.object({
   name: z.string().min(1).max(120),
   code: z.string().min(1).max(30).regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'Code: letter first, then letters/numbers/_'),
+  /** Shared across tests that measure the same thing, so report history joins them. */
+  analyteCode: z
+    .string()
+    .trim()
+    .max(30)
+    .regex(/^[A-Za-z0-9_]*$/, 'Analyte code: letters, numbers and _ only')
+    .transform((c) => (c ? c.toUpperCase() : undefined))
+    .optional(),
   unit: z.string().max(30).optional().or(z.literal('').transform(() => undefined)),
   valueType: z.enum(['NUMBER', 'TEXT', 'OPTION', 'CALCULATED', 'CUTOFF']),
   /** CUTOFF only: at or above reads positive. */

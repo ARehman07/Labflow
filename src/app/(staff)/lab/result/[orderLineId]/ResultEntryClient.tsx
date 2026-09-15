@@ -48,6 +48,17 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
     return init;
   }, [entry]);
   const [values, setValues] = useState<Record<string, string>>(initialValues);
+  // Flags and calculated values follow a value once typing pauses (or the
+  // field is left), not every keystroke: the "1" on the way to "14" is not a
+  // critical result, and flagging it as one made the screen flash and jump.
+  const [settled, setSettled] = useState<Record<string, string>>(initialValues);
+  const settleTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => setSettled(values), 700);
+    return () => clearTimeout(settleTimer.current);
+  }, [values]);
+  const settleNow = () => { clearTimeout(settleTimer.current); setSettled(values); };
   const [remarks, setRemarks] = useState(entry.remarks);
   // An AI draft comment, for the technologist to read and use or ignore.
   const [aiOn, setAiOn] = useState(false);
@@ -76,15 +87,15 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
     cutoff: p.cutoff,
   })), [entry]);
 
-  // Recomputed on every keystroke — cheap, and it is the same calculation the
-  // server will run, so what is shown is what will be saved.
+  // The same calculation the server will run, so what is shown is what will be
+  // saved — judged on the settled values above.
   const live = useMemo(() => {
-    const out = computeResultSet(defs, values, {
+    const out = computeResultSet(defs, settled, {
       ageDays: entry.ageDays,
       sex: entry.sex as 'MALE' | 'FEMALE' | 'OTHER' | null,
     } as Parameters<typeof computeResultSet>[2]);
     return new Map(out.map((r) => [r.code, r]));
-  }, [defs, values, entry.ageDays, entry.sex]);
+  }, [defs, settled, entry.ageDays, entry.sex]);
 
   const criticalCount = entry.params.filter((p) => {
     const r = live.get(p.code);
@@ -97,6 +108,7 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
   function onEnter(e: React.KeyboardEvent<HTMLInputElement>, code: string) {
     if (e.key !== 'Enter') return;
     e.preventDefault();
+    settleNow();
     if ((e.ctrlKey || e.metaKey) && entry.next) { goNext(); return; }
     const i = measured.findIndex((p) => p.code === code);
     const next = fields.current[i + 1];
@@ -189,12 +201,6 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
         </div>
       )}
 
-      {criticalCount > 0 && (
-        <p className="flex items-start gap-2 rounded-xl border border-danger-line bg-danger-soft px-3.5 py-2.5 text-sm font-medium text-danger-text" role="alert">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {t('result.criticalWarn')}
-        </p>
-      )}
-
       <div className="card overflow-hidden">
         {/* Column headings from tablet width up; a phone gets one card per value. */}
         <div className="hidden grid-cols-[minmax(0,1.3fr)_9rem_4.5rem_minmax(0,1.3fr)_6rem_minmax(0,1fr)] gap-x-3 border-b border-line bg-surface-2/60 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-subtle md:grid">
@@ -259,6 +265,7 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
                       disabled={!editable}
                       onChange={(e) => setValues((v) => ({ ...v, [p.code]: e.target.value }))}
                       onKeyDown={(e) => onEnter(e, p.code)}
+                      onBlur={settleNow}
                       autoFocus={myIndex === 0 && editable}
                       className={cn('field py-2 text-end text-base font-semibold tabular-nums',
                         has && r!.flag === 'CRITICAL' && 'border-danger-line text-danger-text',
@@ -303,16 +310,6 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
             <Sparkles className="h-3.5 w-3.5" /> {t('ai.analyze')}
           </Button>
         </div>
-        {aiText && (
-          <div className="mb-2 rounded-xl border border-brand-500/25 bg-brand-500/[0.05] p-3 text-sm">
-            <p className="whitespace-pre-wrap text-body">{aiText}</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              {editable && <Button size="sm" variant="outline" onClick={() => { setRemarks((r) => (r.trim() ? `${r.trim()}\n${aiText}` : aiText)); setAiText(null); }}>{t('ai.useInRemarks')}</Button>}
-              <Button size="sm" variant="ghost" onClick={() => setAiText(null)}>{t('common.close')}</Button>
-              <span className="text-xs text-subtle">{t('ai.disclaimer')}</span>
-            </div>
-          </div>
-        )}
         <textarea
           id="result-remarks"
           value={remarks}
@@ -323,6 +320,17 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
           placeholder={t('result.remarksPlaceholder')}
           className="field resize-y leading-relaxed"
         />
+        {/* Below the box, so a late draft never moves the field being typed in. */}
+        {aiText && (
+          <div className="mt-2 rounded-xl border border-brand-500/25 bg-brand-500/[0.05] p-3 text-sm">
+            <p className="whitespace-pre-wrap text-body">{aiText}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {editable && <Button size="sm" variant="outline" onClick={() => { setRemarks((r) => (r.trim() ? `${r.trim()}\n${aiText}` : aiText)); setAiText(null); }}>{t('ai.useInRemarks')}</Button>}
+              <Button size="sm" variant="ghost" onClick={() => setAiText(null)}>{t('common.close')}</Button>
+              <span className="text-xs text-subtle">{t('ai.disclaimer')}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {error && <p className="note-danger"><Tr text={error} /></p>}
@@ -332,8 +340,13 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
           dirty={dirty}
           saving={isPending}
           onSave={() => save()}
-          onDiscard={() => { setValues(baseline); setRemarks(savedRemarks); }}
+          onDiscard={() => { setValues(baseline); setSettled(baseline); setRemarks(savedRemarks); }}
           saveLabel={t('result.save')}
+          alert={criticalCount > 0 && (
+            <p className="flex items-start gap-2 rounded-xl border border-danger-line bg-danger-soft px-3 py-2 text-sm font-medium text-danger-text" role="alert">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {t('result.criticalWarn')}
+            </p>
+          )}
           note={entry.next ? t('result.enterHintNext') : t('result.enterHint')}
           extra={entry.next && (
             <Button variant="outline" onClick={goNext} loading={goingNext} disabled={isPending} className="min-w-0 max-w-full">

@@ -124,7 +124,24 @@ export function BillingClient({
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={4} className="px-5 py-12 text-center text-subtle">{t('common.loading')}</td></tr>
+                // Rows shaped like real ones (h-10 avatar + py-3.5), so the table
+                // keeps roughly its height instead of collapsing to one line.
+                Array.from({ length: 8 }, (_, i) => (
+                  <tr key={i} aria-hidden>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <div className="skeleton h-10 w-10 shrink-0 rounded-full" />
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <div className="skeleton h-4 w-40 max-w-full" />
+                          <div className="skeleton h-3 w-56 max-w-full" />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3.5"><div className="skeleton ms-auto h-4 w-20" /></td>
+                    <td className="px-4 py-3.5"><div className="skeleton ms-auto h-5 w-24 rounded-full" /></td>
+                    <td className="px-5 py-3.5"><div className="ms-auto h-4 w-4" /></td>
+                  </tr>
+                ))
               ) : invoices.length === 0 ? (
                 <tr><td colSpan={4} className="px-5 py-14 text-center text-subtle">{t('billing.none')}</td></tr>
               ) : (
@@ -175,22 +192,25 @@ export function BillingClient({
                 })
               )}
             </tbody>
-            {!loading && invoices.length > 0 && (
+            {/* Always present (dashes while loading) so the footer never pops in under the rows. */}
+            {(loading || invoices.length > 0) && (
               <tfoot>
                 <tr className="text-sm">
                   <td className="px-5 py-3 font-medium text-muted">
-                    {invoices.length} {t(invoices.length === 1 ? 'billing.invoice' : 'billing.invoices')}
-                    {/* The query is capped, so say so — otherwise these totals
-                        quietly disagree with the tiles above on a busy day. */}
-                    {invoices.length >= LIST_CAP && (
-                      <span className="ms-1.5 font-normal text-subtle">{t('billing.cappedList')}</span>
-                    )}
+                    {loading ? '—' : <>
+                      {invoices.length} {t(invoices.length === 1 ? 'billing.invoice' : 'billing.invoices')}
+                      {/* The query is capped, so say so — otherwise these totals
+                          quietly disagree with the tiles above on a busy day. */}
+                      {invoices.length >= LIST_CAP && (
+                        <span className="ms-1.5 font-normal text-subtle">{t('billing.cappedList')}</span>
+                      )}
+                    </>}
                   </td>
                   <td className="px-4 py-3 text-end font-bold tabular-nums text-strong">
-                    {formatPkr(invoices.reduce((n, i) => n + i.net, 0))}
+                    {loading ? '—' : formatPkr(invoices.reduce((n, i) => n + i.net, 0))}
                   </td>
                   <td className="px-4 py-3 text-end">
-                    {(() => {
+                    {loading ? <span className="font-medium text-muted">—</span> : (() => {
                       const owed = invoices.reduce((n, i) => n + i.balance, 0);
                       return owed > 0 ? (
                         <span className="font-bold tabular-nums text-warn-text">

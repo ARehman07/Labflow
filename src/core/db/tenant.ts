@@ -77,6 +77,7 @@ export const TENANT_SCOPED_MODELS = new Set<string>([
   'MessageLog',
   'DocumentTemplate',
   'PatientDocument',
+  'LabPayment',
 ]);
 
 /** Models deliberately NOT tenant-scoped, with the reason. */
@@ -84,6 +85,7 @@ export const GLOBAL_MODELS: Record<string, string> = {
   Tenant: 'the tenant registry itself',
   Permission: 'system-wide permission catalogue, identical for every lab',
   RolePermission: 'join table; scoped transitively through Role',
+  PlatformEvent: 'the platform team\'s record of what it did to labs; outlives a removed lab',
 };
 
 /** Operations whose `where` must be narrowed to the tenant. */

@@ -22,6 +22,7 @@ import {
   updateDocumentAction,
   uploadDocumentScanAction,
 } from '@/modules/documents/documents.actions';
+import { printElement } from '@/lib/print-isolated';
 
 export interface DocumentViewData {
   id: string;
@@ -78,7 +79,7 @@ export function DocumentView({ doc, letterhead, canManage }: { doc: DocumentView
 
   async function print() {
     if (canManage) await markDocumentPrintedAction(doc.id);
-    window.print();
+    await printElement(document.querySelector('.print-area'));
     router.refresh();
   }
 

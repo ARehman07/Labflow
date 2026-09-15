@@ -22,15 +22,11 @@ export function QueueClient({ canManage }: { canManage: boolean }) {
   const [isPending, startTransition] = useTransition();
   const busy = useRef(false); // in-flight guard — prevents double-advance from duplicate clicks
 
-  const HOW_KEY = 'labflow.queue.howHidden';
-  const [showHow, setShowHow] = useState(true);
-  useEffect(() => {
-    try { if (localStorage.getItem(HOW_KEY) === '1') setShowHow(false); } catch { /* storage blocked */ }
-  }, []);
-  const setHow = (show: boolean) => {
-    setShowHow(show);
-    try { show ? localStorage.removeItem(HOW_KEY) : localStorage.setItem(HOW_KEY, '1'); } catch { /* storage blocked */ }
-  };
+  // Starts collapsed on every visit and opens only on a click. A remembered
+  // choice can only be read from localStorage after the first paint, so honouring
+  // it meant drawing the tall card and then snatching it away — the whole page
+  // jumped for everyone who had hidden it.
+  const [showHow, setHow] = useState(false);
 
   const load = useCallback(() => {
     getQueueAction()
@@ -82,8 +78,8 @@ export function QueueClient({ canManage }: { canManage: boolean }) {
         </Link>
       </div>
 
-      {/* How it works — useful the first few times, then just in the way. Once
-          hidden it stays hidden in this browser, and can be brought back. */}
+      {/* How it works — useful the first few times, then just in the way, so it
+          stays folded to one line until asked for. */}
       {showHow ? (
       <Card className="bg-brand-500/[0.06] p-4">
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -172,29 +168,6 @@ export function QueueClient({ canManage }: { canManage: boolean }) {
         </div>
       </Card>
 
-      {earlier > 0 && (
-        <Link
-          href="/lab?stage=COLLECT"
-          className="group flex items-center gap-3 rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-warn-text transition-opacity hover:opacity-90"
-        >
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-warn-text/10">
-            <Droplet className="h-4 w-4" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">
-              {earlier === 1
-                ? t('queue.earlierOne')
-                : t('queue.earlierMany').replace('{n}', String(earlier))}
-            </span>
-            <span className="block text-xs opacity-80">{t('queue.earlierHint')}</span>
-          </span>
-          <span className="flex shrink-0 items-center gap-1 text-sm font-semibold">
-            {t('queue.openCollect')}
-            <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 rtl:rotate-180" />
-          </span>
-        </Link>
-      )}
-
       {/* Token list */}
       <div>
         <div className="section-title mb-2">{t('queue.tokensToday')}</div>
@@ -238,6 +211,31 @@ export function QueueClient({ canManage }: { canManage: boolean }) {
           </table>
         </Card>
       </div>
+
+      {/* Below the table, not above it: it only shows up after the first fetch
+          and can come and go with the poll, and above it pushed every token down. */}
+      {earlier > 0 && (
+        <Link
+          href="/lab?stage=COLLECT"
+          className="group flex items-center gap-3 rounded-xl border border-warn-line bg-warn-soft px-4 py-3 text-warn-text transition-opacity hover:opacity-90"
+        >
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-warn-text/10">
+            <Droplet className="h-4 w-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">
+              {earlier === 1
+                ? t('queue.earlierOne')
+                : t('queue.earlierMany').replace('{n}', String(earlier))}
+            </span>
+            <span className="block text-xs opacity-80">{t('queue.earlierHint')}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1 text-sm font-semibold">
+            {t('queue.openCollect')}
+            <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 rtl:rotate-180" />
+          </span>
+        </Link>
+      )}
     </div>
   );
 }

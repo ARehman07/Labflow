@@ -152,6 +152,7 @@ async function main() {
       create: { tenantId,
         testId: lipid.id,
         code: p.code,
+        analyteCode: p.code,
         name: p.name,
         unit: p.unit,
         valueType: p.valueType,
@@ -231,6 +232,8 @@ async function main() {
       create: { tenantId,
         testId: test.id,
         code: 'V1',
+        // The analyte, so history joins this with the same measurement on other tests.
+        analyteCode: ({ CBC: 'HB', RBS: 'GLUCOSE_R', CREAT: 'CREAT', HBA1C: 'HBA1C', ABO: 'ABO', URIC: 'URIC' } as Record<string, string>)[st.code] ?? null,
         name: st.param.name,
         unit: st.param.unit,
         valueType: st.param.type,
