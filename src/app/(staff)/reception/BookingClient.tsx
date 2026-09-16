@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, ArrowRight, BadgePercent, CalendarClock, Check, CircleAlert, CreditCard, Keyboard, MessageSquareText, Package, Plus, RotateCcw, Search, StickyNote, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BadgePercent, CalendarClock, Check, CircleAlert, CreditCard, Keyboard, MessageSquareText, Package, Plus, RotateCcw, Search, StickyNote, UserPlus, Users, type LucideIcon } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { useFeatures } from '@/core/features/FeaturesProvider';
 import { SAMPLE_SOURCE_FEATURES } from '@/core/features/catalog';
@@ -265,6 +265,20 @@ export function BookingClient() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [f, ownCard, selected, patientQuery, patientTab, formMobile]);
 
+  // Picking "family card" used to open an empty number field, two steps after
+  // the booking had already found a card and shown whose it is. The number the
+  // banner is about is filled in instead, and stays editable for the case where
+  // the card is held on some other number.
+  const foundCardMobile = suggested?.mobile ?? (cardHint?.usable ? cardHint.mobile : null);
+  const [joinPrefilled, setJoinPrefilled] = useState(false);
+  useEffect(() => {
+    if (!(discountOn && discountSource === 'CARD' && cardMode === 'JOIN')) return;
+    if (joinMobile.trim() || !foundCardMobile) return;
+    setJoinMobile(foundCardMobile);
+    setJoinPrefilled(true);
+  }, [discountOn, discountSource, cardMode, joinMobile, foundCardMobile]);
+  useEffect(() => { setJoinPrefilled(false); }, [selected]);
+
   const joinDeb = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
     clearTimeout(joinDeb.current);
@@ -406,6 +420,20 @@ export function BookingClient() {
 
   const receivedAmount = receivedTouched ? Math.max(0, Number(received) || 0) : net;
   const changeDue = payMethod === 'CASH' ? Math.max(0, receivedAmount - net) : 0;
+  // What someone pays Rs 510 with: the next note up, and the one after it.
+  const cashNotes = [500, 1000, 2000, 5000].filter((n) => n > net).slice(0, 2);
+
+  // Struck only when the patient really pays less than the tests come to — a
+  // card's joining fee can push the bill the other way, and a struck figure
+  // above a higher one would be a lie.
+  const saving = net < total ? total - net : 0;
+  // A card that is doing something is named; one merely sitting on the number
+  // is offered. Anything else (a manual discount) needs no note here.
+  const cardNote = cardApplies
+    ? t('book.cardSaving').replace('{pct}', String(effectivePct))
+    : cardHint?.usable && !cardApplies
+      ? t('book.cardOffer').replace('{pct}', String(cardHint.discountPct))
+      : null;
   const stillDue = Math.max(0, net - receivedAmount);
 
   const addToCart = (items: QuickTest[]) =>
@@ -1021,10 +1049,16 @@ export function BookingClient() {
                 )}
 
                 {ownCard ? (
-                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-ok-line bg-ok-soft px-3.5 py-2.5 text-sm text-ok-text">
-                    <CreditCard className="h-4 w-4 shrink-0" />
-                    <span className="font-semibold">{ownCard.discountPct}% {t('reception.cardApplied')}</span>
-                    <span className="font-mono text-xs opacity-75">{ownCard.mobile}</span>
+                  <div className="rounded-xl border border-ok-line bg-ok-soft px-3.5 py-2.5">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-ok-text">
+                      <CreditCard className="h-4 w-4 shrink-0" />
+                      <span className="font-semibold">{ownCard.discountPct}% {t('reception.cardApplied')}</span>
+                      <span className="font-mono text-xs opacity-75">{ownCard.mobile}</span>
+                    </div>
+                    {/* The whole discount apparatus disappears for a card holder,
+                        which reads as a missing feature unless the reason is said.
+                        It is the rule from billing/discount: the card is final. */}
+                    <p className="mt-1 text-xs text-ok-text/75">{t('reception.cardFinal')}</p>
                   </div>
                 ) : discountOn ? (
                   <div className="mt-2.5">
@@ -1094,16 +1128,28 @@ export function BookingClient() {
 
                     {discountSource === 'CARD' && (
                       <div className="mt-3 space-y-2.5">
-                        <Segmented
-                          size="sm"
-                          value={cardMode}
-                          onChange={setCardMode}
-                          ariaLabel={t('familyCard.title')}
-                          options={[
-                            { value: 'JOIN', label: t('reception.cardJoin'), icon: <Users className="h-3.5 w-3.5 shrink-0" /> },
-                            { value: 'CREATE', label: t('reception.cardCreate'), icon: <CreditCard className="h-3.5 w-3.5 shrink-0" /> },
-                          ]}
-                        />
+{/* Two long sentences do not fit in a segmented control's slot: squeezed
+                            into one they wrapped to a 24px line of 11px text that read as
+                            neither a tab nor a choice. Each option is its own card now, with
+                            room to say what picking it does and what it costs. */}
+                        <div role="radiogroup" aria-label={t('familyCard.title')} className="grid gap-2 sm:grid-cols-2">
+                          <CardChoice
+                            selected={cardMode === 'JOIN'}
+                            onSelect={() => setCardMode('JOIN')}
+                            icon={Users}
+                            title={t('reception.cardJoin')}
+                            sub={t('reception.cardJoinWhat')}
+                          />
+                          <CardChoice
+                            selected={cardMode === 'CREATE'}
+                            onSelect={() => setCardMode('CREATE')}
+                            icon={CreditCard}
+                            title={t('reception.cardCreate')}
+                            sub={t('reception.cardCreateWhat')
+                              .replace('{fee}', formatPkr(cardPolicy.fee))
+                              .replace('{pct}', String(cardPolicy.discountPct))}
+                          />
+                        </div>
 
                         {cardMode === 'JOIN' && (
                           <div>
@@ -1129,6 +1175,9 @@ export function BookingClient() {
                                 </>
                               ) : joinInfo ? (joinInfo.reason ?? t('reception.cardNotFound')) : t('reception.cardJoinHint')}
                             </p>
+                            {joinPrefilled && joinMobile === foundCardMobile && (
+                              <p className="mt-1 text-xs text-muted">{t('reception.cardJoinPrefilled')}</p>
+                            )}
                             {/* Who they are to the holder is what justifies the discount,
                                 so it is asked at the moment of joining. */}
                             <div className="mt-2">
@@ -1162,17 +1211,12 @@ export function BookingClient() {
                               value={newCardMobile}
                               onChange={(e) => setNewCardMobile(e.target.value)}
                             />
-                            {newCardClash ? (
-                              <p className="mt-1.5 text-sm text-danger-text">
-                                {t('reception.cardNumberTaken').replace('{name}', newCardClash.holderName ?? '')}
-                              </p>
-                            ) : (
-                              <p className="mt-1.5 text-sm text-muted">
-                                {t('reception.cardCreateNote')
-                                  .replace('{fee}', formatPkr(cardPolicy.fee))
-                                  .replace('{pct}', String(cardPolicy.discountPct))}
-                              </p>
-                            )}
+            {/* Always drawn, so a clash appearing never shifts the total below it. */}
+                            <p className={cn('mt-1.5 min-h-5 text-sm', newCardClash ? 'text-danger-text' : 'text-muted')}>
+                              {newCardClash
+                                ? t('reception.cardNumberTaken').replace('{name}', newCardClash.holderName ?? '')
+                                : t('reception.cardCreateHint')}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -1249,6 +1293,37 @@ export function BookingClient() {
                       </div>
                       <div>
                         <label className="label" htmlFor="pay-received">{t('pay.received')}</label>
+                        {/* The notes a patient actually hands over. They are here to be
+                            tapped, but mostly they are here to be seen: the change line
+                            below was a feature nobody knew about until they happened to
+                            type an amount larger than the bill. */}
+                        {payMethod === 'CASH' && (
+                          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => { setReceivedTouched(true); setReceived(String(net)); }}
+                              className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors',
+                                receivedAmount === net
+                                  ? 'border-brand-600 bg-brand-600 text-white'
+                                  : 'border-line bg-surface text-body hover:border-brand-300 hover:text-strong')}
+                            >
+                              {t('pay.exactShort')} · {formatPkr(net)}
+                            </button>
+                            {cashNotes.map((n) => (
+                              <button
+                                key={n}
+                                type="button"
+                                onClick={() => { setReceivedTouched(true); setReceived(String(n)); }}
+                                className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold tabular-nums transition-colors',
+                                  receivedAmount === n
+                                    ? 'border-brand-600 bg-brand-600 text-white'
+                                    : 'border-line bg-surface text-body hover:border-brand-300 hover:text-strong')}
+                              >
+                                {formatPkr(n)}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                         <div className="field flex items-center gap-2 py-0 ps-3.5 focus-within:border-brand-500 focus-within:bg-surface">
                           <span className="shrink-0 text-sm font-bold text-subtle">Rs</span>
                           <input
@@ -1261,19 +1336,29 @@ export function BookingClient() {
                             className="field-inner py-2.5 text-base font-semibold tabular-nums"
                           />
                         </div>
-                        {/* The sum the cashier would otherwise do in their head. One line
-                            that is always there, so typing the amount never moves the form. */}
-                        <p
-                          className={cn('mt-1.5 rounded-lg px-3 py-2 text-sm font-semibold',
-                            changeDue > 0 ? 'bg-ok-soft text-ok-text' : stillDue > 0 ? 'bg-warn-soft text-warn-text' : 'bg-surface-2 text-subtle')}
+                        {/* The sum the cashier would otherwise do in their head, said as
+                            a figure and not as a sentence: at a counter it is read at a
+                            glance, across a desk, while counting notes. Always there, in
+                            the same place, so typing never moves the form. */}
+                        <div
+                          className={cn('mt-2 flex items-center justify-between gap-3 rounded-xl px-3.5 py-2.5',
+                            changeDue > 0 ? 'bg-ok-soft' : stillDue > 0 ? 'bg-warn-soft' : 'bg-surface-2')}
                           aria-live="polite"
                         >
-                          {changeDue > 0
-                            ? t('pay.change').replace('{amount}', formatPkr(changeDue))
-                            : stillDue > 0
-                              ? t('pay.remaining').replace('{amount}', formatPkr(stillDue))
-                              : t('pay.exact')}
-                        </p>
+                          <span className="min-w-0">
+                            <span className={cn('block text-[11px] font-bold uppercase tracking-wider',
+                              changeDue > 0 ? 'text-ok-text' : stillDue > 0 ? 'text-warn-text' : 'text-subtle')}>
+                              {changeDue > 0 ? t('pay.changeLabel') : stillDue > 0 ? t('pay.remainingLabel') : t('pay.exactLabel')}
+                            </span>
+                            {changeDue === 0 && stillDue === 0 && (
+                              <span className="block text-xs text-muted">{t('pay.exactNote')}</span>
+                            )}
+                          </span>
+                          <span className={cn('shrink-0 text-xl font-extrabold tabular-nums',
+                            changeDue > 0 ? 'text-ok-text' : stillDue > 0 ? 'text-warn-text' : 'text-subtle')}>
+                            {formatPkr(changeDue > 0 ? changeDue : stillDue > 0 ? stillDue : net)}
+                          </span>
+                        </div>
                       </div>
                     </>
                   )}
@@ -1310,13 +1395,30 @@ export function BookingClient() {
             </div>
           )}
           <div className="flex items-center gap-2 rounded-2xl border border-line bg-surface/95 p-2.5 shadow-card backdrop-blur-md sm:gap-3 sm:p-3">
-          <div className="min-w-0 flex-1 ps-1 text-sm">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-semibold text-strong">{selected?.fullName ?? t('book.noPatientYet')}</span>
-              {cardHint && step > 0 && <FamilyCardChip hint={cardHint} patientName={selected?.fullName ?? null} />}
-            </div>
-            <div className="truncate text-xs text-muted">
-              {cartEmpty ? t('reception.noTests') : `${(testCount === 1 ? t('book.oneTest') : t('book.nTests').replace('{n}', String(testCount)))} · ${formatPkr(net)}`}
+          <div className="min-w-0 flex-1 ps-1">
+            <div className="truncate text-sm font-semibold leading-5 text-strong">{selected?.fullName ?? t('book.noPatientYet')}</div>
+            {/* The card is carried by the price it changes, not by a badge
+                competing with the buttons: the old figure struck through, the
+                new one beside it, and what did that in three words. A pill here
+                set the line height and crowded everything around it. */}
+            <div className="truncate text-xs leading-4 text-muted">
+              {cartEmpty ? t('reception.noTests') : (<>
+                <span>{testCount === 1 ? t('book.oneTest') : t('book.nTests').replace('{n}', String(testCount))}</span>
+                <span aria-hidden> · </span>
+                {saving > 0 && (
+                  <span className="me-1 tabular-nums line-through opacity-60">{formatPkr(total)}</span>
+                )}
+                <span className="font-semibold tabular-nums text-body">{formatPkr(net)}</span>
+                {cardNote && (
+                  <>
+                    <span aria-hidden> · </span>
+                    <span className="font-semibold text-amber-700 dark:text-amber-300">
+                      <span aria-hidden className="me-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle" />
+                      {cardNote}
+                    </span>
+                  </>
+                )}
+              </>)}
             </div>
           </div>
           {step > 0 && (
@@ -1348,6 +1450,44 @@ export function BookingClient() {
  * the one warm, saturated block on the screen — so it is seen at a glance and
  * not mistaken for the blue and amber notices around it.
  */
+/**
+ * One of two ways to give this patient a card rate. Drawn as a card and not a
+ * tab because the two are not views of the same thing: one joins something
+ * that exists, the other issues something new and charges for it.
+ */
+function CardChoice({
+  selected, onSelect, icon: Icon, title, sub,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  icon: LucideIcon;
+  title: string;
+  sub: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        'flex items-start gap-2.5 rounded-xl border p-3 text-start transition-colors',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface',
+        selected
+          ? 'border-brand-600 bg-brand-500/[0.07]'
+          : 'border-line bg-surface hover:border-line-strong hover:bg-surface-2',
+      )}
+    >
+      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', selected ? 'text-brand-600 dark:text-brand-300' : 'text-muted')} />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-strong">{title}</span>
+        <span className="mt-0.5 block text-xs leading-snug text-muted">{sub}</span>
+      </span>
+      <Check className={cn('mt-0.5 h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300', !selected && 'opacity-0')} />
+    </button>
+  );
+}
+
 function FamilyCardBanner({ hint, patientName }: { hint: FamilyCardHintDTO; patientName: string | null }) {
   const { t } = useI18n();
 
@@ -1371,16 +1511,22 @@ function FamilyCardBanner({ hint, patientName }: { hint: FamilyCardHintDTO; pati
           <span className="font-bold text-amber-950 dark:text-amber-100">
             {hint.onThisCard && patientName
               ? t('book.cardOnPatient').replace('{name}', patientName)
-              : t('book.cardOnNumber')}
+              : t('book.cardHeldBy').replace('{name}', hint.holderName)}
           </span>
-          <span className="rounded-full bg-amber-600 px-2 py-0.5 text-xs font-bold text-white">
-            {t('book.cardPctOff').replace('{pct}', String(hint.discountPct))}
+          {/* The rate is only a fact for a member. For anyone else this number's
+              card is an offer, and the pill has to say so — a bare "15% off"
+              beside a stranger's name reads as a discount already applied. */}
+          <span className={cn('rounded-full px-2 py-0.5 text-xs font-bold',
+            hint.onThisCard ? 'bg-amber-600 text-white' : 'border border-amber-600 text-amber-900 dark:border-amber-400/70 dark:text-amber-200')}>
+            {t(hint.onThisCard ? 'book.cardPctOff' : 'book.cardPctIfJoin').replace('{pct}', String(hint.discountPct))}
           </span>
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-amber-900/80 dark:text-amber-200/80">
           <span className="font-mono font-semibold tabular-nums">{hint.mobile}</span>
           <span aria-hidden>·</span>
-          <span>{t('book.cardHolder').replace('{name}', `${hint.holderName} (${hint.holderMrNo})`)}</span>
+          <span>{hint.onThisCard
+            ? t('book.cardHolder').replace('{name}', `${hint.holderName} (${hint.holderMrNo})`)
+            : hint.holderMrNo}</span>
           <span aria-hidden>·</span>
           <span>{t('book.cardMembersUsed').replace('{used}', String(hint.used)).replace('{cap}', String(hint.cap))}</span>
         </div>
@@ -1401,74 +1547,3 @@ function cardStatus(hint: FamilyCardHintDTO, t: (key: string) => string): { stat
   return { status: t('book.cardSaveFirst'), statusCls: 'text-amber-900 dark:text-amber-200' };
 }
 
-/**
- * The family card as a chip beside the patient's name in the pinned bar, on
- * every step after Patient, so it stays in view on any screen size without
- * repeating the banner. Solid when the patient is on the card, outlined when a card on the
- * number could be joined, grey when it cannot be used. Tapping shows the details
- * above the bar, over the page rather than pushing it.
- */
-function FamilyCardChip({ hint, patientName }: { hint: FamilyCardHintDTO; patientName: string | null }) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
-  const state = !hint.usable || hint.canJoin === false ? 'blocked' : hint.onThisCard ? 'member' : 'available';
-  const { status, statusCls } = cardStatus(hint, t);
-  const label = state === 'member' ? t('book.chipCard') : state === 'available' ? t('book.chipAvailable') : t('book.chipBlocked');
-
-  return (
-    <span ref={box} className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-label={`${label}${state !== 'blocked' ? ` · ${hint.discountPct}%` : ''}`}
-        className={cn(
-          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500',
-          state === 'member' && 'border border-amber-500 bg-amber-500 text-white hover:bg-amber-600',
-          state === 'available' && 'border border-amber-500 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300',
-          state === 'blocked' && 'border border-line-strong bg-surface-2 text-muted hover:text-strong',
-        )}
-      >
-        <CreditCard className="h-3 w-3" />
-        {/* Phones get the icon and the rate; the words come back from sm up. */}
-        <span className="hidden sm:inline">{label}</span>
-        {state !== 'blocked' && <span className="tabular-nums">{hint.discountPct}%</span>}
-      </button>
-      {open && (
-        <div
-          role="dialog"
-          aria-label={t('book.cardBadge')}
-          className="absolute bottom-full start-0 z-20 mb-2 w-72 max-w-[calc(100vw-2.5rem)] rounded-xl border border-amber-300 bg-surface p-3 text-xs shadow-dropdown animate-scale-in dark:border-amber-500/40"
-        >
-          <div className="font-bold text-strong">
-            {hint.onThisCard && patientName
-              ? t('book.cardOnPatient').replace('{name}', patientName)
-              : t('book.cardOnNumber')}
-            {' · '}{t('book.cardPctOff').replace('{pct}', String(hint.discountPct))}
-          </div>
-          <div className="mt-1 text-muted">
-            <span className="font-mono tabular-nums">{hint.mobile}</span>
-            {' · '}{t('book.cardHolder').replace('{name}', `${hint.holderName} (${hint.holderMrNo})`)}
-            {' · '}{t('book.cardMembersUsed').replace('{used}', String(hint.used)).replace('{cap}', String(hint.cap))}
-          </div>
-          <div className={cn('mt-1.5 font-semibold', statusCls)}>{status}</div>
-        </div>
-      )}
-    </span>
-  );
-}

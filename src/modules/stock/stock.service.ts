@@ -131,9 +131,18 @@ export const stockService = {
       const line = await db.orderLine.findUnique({ where: { id: orderLineId }, select: { testId: true, visit: { select: { slipNo: true } } } });
       if (!line) return;
       const uses = await db.testConsumable.findMany({ where: { testId: line.testId }, select: { itemId: true, quantity: true } });
+      if (uses.length === 0) return;
+      // One grouped read for the whole test, instead of two counts per consumable
+      // inside the collect loop.
+      const already = await db.stockMovement.groupBy({
+        by: ['itemId', 'type'],
+        where: { orderLineId, itemId: { in: uses.map((u) => u.itemId) }, type: { in: ['CONSUME', 'RETURN'] } },
+        _count: { _all: true },
+      });
+      const seen = new Map(already.map((r) => [`${r.itemId}:${r.type}`, r._count._all]));
       for (const u of uses) {
-        const done = await db.stockMovement.count({ where: { orderLineId, itemId: u.itemId, type: 'CONSUME' } });
-        const returned = await db.stockMovement.count({ where: { orderLineId, itemId: u.itemId, type: 'RETURN' } });
+        const done = seen.get(`${u.itemId}:CONSUME`) ?? 0;
+        const returned = seen.get(`${u.itemId}:RETURN`) ?? 0;
         if (done > returned) continue;
         await stockService.move(u.itemId, { type: 'CONSUME', quantity: Number(u.quantity), note: `Slip #${line.visit.slipNo}`, orderLineId }, userId);
       }

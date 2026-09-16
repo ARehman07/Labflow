@@ -121,9 +121,7 @@ export class MissingTenantError extends Error {
  * the unique field (Prisma's extendedWhereUnique, GA since v5), so a row
  * belonging to another lab is simply not found.
  */
-export function forTenant(tenantId: string) {
-  if (!tenantId) throw new MissingTenantError();
-
+function buildForTenant(tenantId: string) {
   return prisma.$extends({
     name: 'tenant-isolation',
     query: {
@@ -154,6 +152,29 @@ export function forTenant(tenantId: string) {
       },
     },
   });
+}
+
+/**
+ * One client per lab, kept.
+ *
+ * `$extends` builds a whole proxied client — every model, every operation —
+ * and `tenantDb()` is called dozens of times in a single request, so building
+ * it each time was pure overhead before any query ran. The extension holds
+ * nothing but the tenant id, so the client is safe to reuse for that lab; the
+ * connection pool underneath is shared either way.
+ */
+const clients = new Map<string, ReturnType<typeof buildForTenant>>();
+/** A server handles few labs at a time; the cap stops a busy platform holding every one. */
+const MAX_CLIENTS = 64;
+
+export function forTenant(tenantId: string) {
+  if (!tenantId) throw new MissingTenantError();
+  const hit = clients.get(tenantId);
+  if (hit) return hit;
+  const client = buildForTenant(tenantId);
+  if (clients.size >= MAX_CLIENTS) clients.clear();
+  clients.set(tenantId, client);
+  return client;
 }
 
 export type TenantClient = ReturnType<typeof forTenant>;

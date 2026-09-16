@@ -67,7 +67,7 @@ export function AddPatientForm({
     if (n.length < 3 && !/^0\d{10}$/u.test(m)) { setSimilar([]); return; }
     similarDeb.current = setTimeout(() => {
       findSimilarPatientsAction({ fullName: n, mobile: m }).then(setSimilar).catch(() => setSimilar([]));
-    }, 400);
+    }, 250);
     return () => clearTimeout(similarDeb.current);
   }, [f.fullName, f.mobile]);
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePoll } from '@/lib/use-poll';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Bell, Building2, CheckCheck, Clock, Cpu, RotateCcw, Undo2, type LucideIcon } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
@@ -41,11 +42,7 @@ export function NotificationBell() {
     getNotificationsAction().then((r) => { setItems(r.items); setUnread(r.unread); }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    load();
-    const id = setInterval(load, 60_000);
-    return () => clearInterval(id);
-  }, [load]);
+  usePoll(load, 60_000);
 
   useEffect(() => {
     if (!open) return;

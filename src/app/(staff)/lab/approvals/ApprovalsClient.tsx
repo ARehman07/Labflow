@@ -10,6 +10,7 @@ import { ConfirmButton } from '@/components/ui/ConfirmButton';
 import { FlagBadge } from '@/components/ui/FlagBadge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ListSkeleton } from '@/components/ui/Skeleton';
+import { LoadError } from '@/components/ui/LoadError';
 import { useToast } from '@/components/ui/Toast';
 import { cn } from '@/lib/utils';
 import {
@@ -35,13 +36,17 @@ export function ApprovalsClient() {
   const { t } = useI18n();
   const toast = useToast();
   const [items, setItems] = useState<ApprovalDTO[]>([]);
+  // Everything waiting, not just the page held here: a pathologist who clears
+  // sixty and sees an empty list must not conclude the queue is done.
+  const [total, setTotal] = useState(0);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(() => {
     getApprovalsAction()
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((res) => { setItems(res.rows); setTotal(res.total); setLoadFailed(false); })
+      .catch(() => setLoadFailed(true))
       .finally(() => setLoading(false));
   }, []);
 
@@ -88,6 +93,8 @@ export function ApprovalsClient() {
         back={{ href: '/lab', label: t('lab.title') }}
       />
 
+      {loadFailed && <LoadError onRetry={load} />}
+
       {loading ? (
         <ListSkeleton rows={3} />
       ) : items.length === 0 ? (
@@ -104,7 +111,9 @@ export function ApprovalsClient() {
           <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
               <span className="font-semibold text-strong tabular-nums">
-                {t('approvals.waitingN').replace('{n}', String(items.length))}
+                {total > items.length
+                  ? t('approvals.waitingOfN').replace('{n}', String(items.length)).replace('{total}', String(total))
+                  : t('approvals.waitingN').replace('{n}', String(items.length))}
               </span>
               <span className="flex items-center gap-1.5 text-ok-text tabular-nums">
                 <CircleCheck className="h-4 w-4" /> {t('approvals.normalN').replace('{n}', String(normal.length))}
@@ -129,6 +138,11 @@ export function ApprovalsClient() {
                 <CheckCheck className="h-4 w-4" />
                 {t('approvals.approveAllNormal').replace('{n}', String(normal.length))}
               </ConfirmButton>
+            )}
+            {total > items.length && (
+              <p className="basis-full text-xs font-medium text-warn-text" role="status">
+                {t('approvals.capped').replace('{shown}', String(items.length)).replace('{total}', String(total))}
+              </p>
             )}
           </div>
 

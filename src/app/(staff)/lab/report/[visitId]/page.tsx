@@ -17,9 +17,12 @@ export default async function StaffReportPage({ params }: { params: { visitId: s
   if (!data) notFound();
 
   const db = await tenantDb();
-  const [tenant, lines] = await Promise.all([
+  const [tenant, lines, visit] = await Promise.all([
     db.tenant.findUnique({ where: { id: await currentTenantId() }, select: { code: true, name: true } }),
     db.orderLine.findMany({ where: { visitId: params.visitId }, select: { status: true } }),
+    // Only to show the address under Send → Email, so a missing one is seen
+    // before the click rather than as an error after it.
+    db.visit.findUnique({ where: { id: params.visitId }, select: { patient: { select: { email: true } } } }),
   ]);
   const wa = await messagesService.template('WHATSAPP_REPORT');
   const h = headers();
@@ -37,6 +40,7 @@ export default async function StaffReportPage({ params }: { params: { visitId: s
       delivered={active.length > 0 && active.every((l) => l.status === 'DELIVERED')}
       printed={active.some((l) => l.status === 'PRINTED' || l.status === 'DELIVERED')}
       waTemplate={wa.custom ? wa.body : null}
+      patientEmail={visit?.patient.email ?? null}
     />
   );
 }

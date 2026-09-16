@@ -25,9 +25,18 @@ const csp = [
 
 const nextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
   // Booking attachments (a phone photo of a prescription, a scanned letter) are
   // sent through a server action; the default 1 MB is smaller than most photos.
-  experimental: { serverActions: { bodySizeLimit: '6mb' } },
+  experimental: {
+    serverActions: { bodySizeLimit: '6mb' },
+    // Hundreds of icon modules across ~50 client files; this pulls in only the used ones.
+    optimizePackageImports: ['lucide-react'],
+    // Keeps Prisma and bcrypt out of the bundler's trace: quicker cold starts.
+    serverComponentsExternalPackages: ['@prisma/client', 'bcryptjs'],
+    // Going back to a page staff just left should not re-render it on the server.
+    staleTimes: { dynamic: 30, static: 180 },
+  },
   // Security headers (closes items from ../vulnerabilities.md: H-1, H-3, clickjacking, CSP).
   async headers() {
     return [

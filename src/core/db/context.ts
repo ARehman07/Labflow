@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { auth } from '@/core/auth/auth';
+import { sessionOnce } from '@/core/auth/session';
 
 /**
  * Work done without a signed-in person — an analyzer posting results — runs
@@ -30,7 +30,7 @@ export async function tenantDb(): Promise<TenantClient> {
 export async function currentTenantId(): Promise<string> {
   const override = tenantOverride.getStore();
   if (override) return override.tenantId;
-  const session = await auth();
+  const session = await sessionOnce();
   const tenantId = session?.user?.tenantId;
   if (!tenantId) throw new MissingTenantError();
   return tenantId;

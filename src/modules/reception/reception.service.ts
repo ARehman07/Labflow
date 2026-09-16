@@ -3,6 +3,7 @@ import { getFeatures } from '@/core/features/features.server';
 import { SAMPLE_SOURCE_FEATURES } from '@/core/features/catalog';
 import type { SlipPatientInput } from './reception.schema';
 import { tenantDb, currentTenantId } from '@/core/db/context';
+import { labPolicy } from '@/core/db/lab-policy';
 import { computeInvoiceTotals } from '@/modules/billing/discount';
 import { familyCardService } from '@/modules/familycard/familycard.service';
 import { formatMrNo, formatSlipNo } from '@/lib/ids';
@@ -159,15 +160,7 @@ export const receptionService = {
     const cardsOn = features['booking.familyCards'];
     const cardMode = cardsOn ? input.familyCardMode : 'NONE';
     const existingCard = cardsOn ? await familyCardService.findForPatient(input.patientId) : null;
-    const tenant = await (await tenantDb()).tenant.findUniqueOrThrow({
-      where: { id: await currentTenantId() },
-      select: {
-        familyCardDiscountPct: true,
-        familyCardMemberCap: true,
-        familyCardFee: true,
-        familyCardDiscountOnIssue: true,
-      },
-    });
+    const tenant = await labPolicy();
 
     // A card may already cover this patient, be joined from a relative's
     // number, or be created here. Only creating one charges the joining fee —
@@ -446,15 +439,16 @@ export const receptionService = {
   async popularTests(branchId: string, limit = 8) {
     const since = new Date();
     since.setDate(since.getDate() - 90);
-    const lines = await (await tenantDb()).orderLine.findMany({
+    // Counted by the database. This used to read three thousand order lines
+    // into memory on every booking screen to tally them by hand.
+    const rows = await (await tenantDb()).orderLine.groupBy({
+      by: ['testId'],
       where: { createdAt: { gte: since }, status: { not: 'CANCELLED' }, visit: { branchId } },
-      select: { testId: true },
-      orderBy: { createdAt: 'desc' },
-      take: 3000,
+      _count: { testId: true },
+      orderBy: { _count: { testId: 'desc' } },
+      take: limit * 2,
     });
-    const counts = new Map<string, number>();
-    for (const l of lines) counts.set(l.testId, (counts.get(l.testId) ?? 0) + 1);
-    const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id).slice(0, limit * 2);
+    const top = rows.map((r) => r.testId);
     const prices = await priceTests(branchId, top);
     return top
       .filter((id) => prices.has(id))

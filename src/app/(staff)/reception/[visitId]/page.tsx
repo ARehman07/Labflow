@@ -6,6 +6,11 @@ import { priceTests } from '@/modules/catalog/catalog.service';
 import { can } from '@/core/rbac/guard';
 import { SlipView, type SlipData } from './SlipView';
 
+const DUE_DATE = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+const DUE_TIME = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const formatDue = (d: Date) =>
+  (d.getHours() === 0 && d.getMinutes() === 0 ? DUE_DATE : DUE_TIME).format(d);
+
 export default async function SlipPage({ params }: { params: { visitId: string } }) {
   const visit = await receptionService.getSlip(params.visitId);
   if (!visit || !visit.invoice) notFound();
@@ -56,9 +61,10 @@ export default async function SlipPage({ params }: { params: { visitId: string }
     collectionPoint: visit.collectionPoint?.name ?? null,
     rateGroup: visit.rateGroup?.name ?? null,
     sampleSource: visit.sampleSource,
-    reportDue: visit.reportDueAt
-      ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(visit.reportDueAt)
-      : null,
+    // A due time of midnight is what "that day" becomes when nobody typed a
+    // time, and printing "17 Sept 2026, 00:00" tells the patient to come at
+    // midnight. Then the date alone is printed; a real time still shows.
+    reportDue: visit.reportDueAt ? formatDue(visit.reportDueAt) : null,
     canAttach: canCreate || canModify,
     visitId: visit.id,
     notes: visit.notes ?? null,

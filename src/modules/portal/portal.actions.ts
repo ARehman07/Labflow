@@ -7,7 +7,7 @@ import type { ReportData } from '@/modules/reporting/report.types';
 export async function requestOtpAction(
   labCode: string,
   mobile: string,
-): Promise<{ ok: boolean; devCode?: string; error?: string }> {
+): Promise<{ ok: boolean; devCode?: string; devNote?: string; error?: string }> {
   return portalService.requestOtp(labCode, mobile.trim());
 }
 

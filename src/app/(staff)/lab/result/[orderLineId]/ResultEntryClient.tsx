@@ -55,7 +55,7 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
   const settleTimer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
     clearTimeout(settleTimer.current);
-    settleTimer.current = setTimeout(() => setSettled(values), 700);
+    settleTimer.current = setTimeout(() => setSettled(values), 300);
     return () => clearTimeout(settleTimer.current);
   }, [values]);
   const settleNow = () => { clearTimeout(settleTimer.current); setSettled(values); };
@@ -73,7 +73,15 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
   }
   const [savedRemarks, setSavedRemarks] = useState(entry.remarks);
   const [baseline, setBaseline] = useState<Record<string, string>>(initialValues);
-  const dirty = JSON.stringify(values) !== JSON.stringify(baseline) || remarks !== savedRemarks;
+  // Compared key by key. Stringifying the whole panel twice on every keystroke
+  // was the most expensive thing on this screen for a 25-parameter CBC.
+  const dirty = useMemo(() => {
+    if (remarks !== savedRemarks) return true;
+    for (const key of new Set([...Object.keys(values), ...Object.keys(baseline)])) {
+      if ((values[key] ?? '') !== (baseline[key] ?? '')) return true;
+    }
+    return false;
+  }, [values, baseline, remarks, savedRemarks]);
 
   const defs: ParameterDef[] = useMemo(() => entry.params.map((p) => ({
     id: p.id,
@@ -126,6 +134,9 @@ export function ResultEntryClient({ entry }: { entry: EntryDTO }) {
   }
 
   function save(thenNext = false) {
+    // Enter on the last field saves too, and that keystroke used to slip past
+    // the button's own guard: two presses, two saves of the same panel.
+    if (isPending) return;
     setError(null);
     startTransition(async () => {
       const res = await saveResultsAction({ orderLineId: entry.orderLineId, values, remarks });

@@ -23,7 +23,8 @@ export default async function ReadyReportsPage() {
 
   return (
     <ReadyClient
-      initial={initial}
+      initial={initial.rows}
+      total={initial.total}
       labName={tenant?.name ?? ''}
       portalLink={`${proto}://${host}/portal?lab=${encodeURIComponent(tenant?.code ?? '')}`}
       waTemplate={wa.custom ? wa.body : null}

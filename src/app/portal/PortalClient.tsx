@@ -19,19 +19,32 @@ import { Tr } from '@/components/ui/Tr';
 
 type Step = 'MOBILE' | 'OTP' | 'LIST' | 'REPORT';
 
+/** Six, because that is what portal.service issues. Kept in one place so the
+ *  box, the placeholder and the button can never disagree with it again. */
+const OTP_LENGTH = 6;
+
 export function PortalClient() {
   const { t } = useI18n();
   const [step, setStep] = useState<Step>('MOBILE');
   const [labCode, setLabCode] = useState('');
 
-  // The QR on a booking slip opens this page as /portal?lab=CODE, so the
-  // patient only has to type their own number. Read once, after mount.
+  // The QR on a booking slip opens this page as /portal?lab=CODE&slip=NNNNN,
+  // so the patient only has to type their own number. The slip number is shown
+  // back to them — the link is the right one — and once they are through the
+  // code, that booking's report opens by itself instead of making them pick it
+  // out of a list they did not ask for. Read once, after mount.
+  const [fromSlip, setFromSlip] = useState<string | null>(null);
   useEffect(() => {
-    const fromLink = new URLSearchParams(window.location.search).get('lab');
+    const q = new URLSearchParams(window.location.search);
+    const fromLink = q.get('lab');
     if (fromLink) setLabCode(fromLink);
+    const slip = q.get('slip');
+    if (slip && /^\d{1,6}$/u.test(slip)) setFromSlip(slip.padStart(5, '0'));
   }, []);
   const [mobile, setMobile] = useState('');
   const [devCode, setDevCode] = useState<string | null>(null);
+  /** Development only: why no code was issued, when none was. */
+  const [devNote, setDevNote] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [token, setToken] = useState('');
   const [reports, setReports] = useState<PortalReportSummary[]>([]);
@@ -45,6 +58,10 @@ export function PortalClient() {
       const res = await requestOtpAction(labCode, mobile);
       if (!res.ok) return setError(res.error ?? 'Failed');
       setDevCode(res.devCode ?? null);
+      setDevNote(res.devNote ?? null);
+      // Nothing was sent and nothing can be typed, so stay on this step and say
+      // so, rather than parking the tester at a code box that cannot work.
+      if (res.devNote) return;
       setStep('OTP');
     });
 
@@ -54,8 +71,15 @@ export function PortalClient() {
       const res = await verifyOtpAction(labCode, mobile, code);
       if (!res.ok || !res.token) return setError(res.error ?? 'Failed');
       setToken(res.token);
-      setReports(res.reports ?? []);
+      const list = res.reports ?? [];
+      setReports(list);
       setStep('LIST');
+      // The booking they scanned, when it is ready and theirs.
+      const scanned = fromSlip ? list.find((r) => r.slipNo === fromSlip) : undefined;
+      if (scanned) {
+        const data = await getPortalReportAction(res.token, scanned.visitId);
+        if (data) { setReport(data); setStep('REPORT'); }
+      }
     });
 
   // A patient keeps their own copy: history on request, and a PDF named after the slip.
@@ -115,19 +139,25 @@ export function PortalClient() {
                 spellCheck={false}
                 className="field"
               />
-              <p className="mt-1.5 text-xs text-subtle">{t('portal.labCodeHint')}</p>
+              <p className="mt-1.5 text-xs text-subtle">
+                {fromSlip ? t('portal.bookingNo').replace('{slip}', fromSlip) : t('portal.labCodeHint')}
+              </p>
             </div>
             <div>
               <label className="label">{t('portal.mobile')}</label>
               <input
                 value={mobile}
                 onChange={(e) => setMobile(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && mobile.trim().length >= 11 && labCode.trim().length >= 2) sendCode(); }}
                 placeholder="03001234567"
                 inputMode="numeric"
                 className="field text-lg tracking-wide"
               />
               <p className="mt-1.5 text-xs text-subtle">{t('portal.codeHint')}</p>
             </div>
+            {devNote && (
+              <p className="rounded-xl border border-warn-line bg-warn-soft px-3 py-2 text-sm text-warn-text">{devNote}</p>
+            )}
             {error && <p className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
             <Button size="lg" className="w-full" onClick={sendCode} loading={isPending} disabled={mobile.trim().length < 11 || labCode.trim().length < 2}>
               {t('portal.sendCode')}
@@ -147,14 +177,17 @@ export function PortalClient() {
               <label className="label">{t('portal.enterCode')}</label>
               <input
                 value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                placeholder="••••"
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, OTP_LENGTH))}
+                onKeyDown={(e) => { if (e.key === 'Enter' && code.length === OTP_LENGTH) verify(); }}
+                placeholder={'•'.repeat(OTP_LENGTH)}
                 inputMode="numeric"
-                className="field text-center text-2xl font-bold tracking-[0.5em]"
+                autoComplete="one-time-code"
+                maxLength={OTP_LENGTH}
+                className="field text-center text-2xl font-bold tracking-[0.4em]"
               />
             </div>
             {error && <p className="rounded-xl bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
-            <Button size="lg" className="w-full" onClick={verify} loading={isPending} disabled={code.length < 4}>
+            <Button size="lg" className="w-full" onClick={verify} loading={isPending} disabled={code.length < OTP_LENGTH}>
               {t('portal.viewReports')}
             </Button>
             <button onClick={() => { setStep('MOBILE'); setCode(''); setError(null); }} className="w-full text-center text-sm text-muted hover:text-body">

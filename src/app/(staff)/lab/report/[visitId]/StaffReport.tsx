@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, FileDown, HandHeart, History, ImageDown, Mail, MessageCircle, MessageSquare, Printer, Sparkles, Stamp } from 'lucide-react';
+import {
+  Check, CheckCircle2, FileDown, HandHeart, History, ImageDown, Loader2, Mail, MessageCircle,
+  MessageSquare, MoreHorizontal, Printer, Send, Sparkles, Stamp, type LucideIcon,
+} from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -25,14 +28,20 @@ const PREF_LETTERHEAD = 'labflow.report.letterhead';
 /**
  * A released report, with the ways it leaves the lab.
  *
- * Printing it, sending it on WhatsApp and handing it over each record that it
- * happened. Two print choices sit beside Print because they depend on the
- * counter, not the report: whether this lab prints the patient's earlier
- * results alongside, and whether the paper in the tray already has the
- * letterhead on it. Both are remembered on this computer.
+ * There are only two questions at this counter: print it, or send it. So there
+ * are two buttons. WhatsApp, SMS and email are four ways of answering the
+ * second one and belong together under Send, each saying where it is going and
+ * why it cannot go when it cannot — lined up as a row of equal buttons they
+ * read as five unrelated features and hid the one that gets used.
+ *
+ * With history stays out in the open: it is on for most reports, it is decided
+ * per report, and it changes what is about to come out of the printer. The
+ * settings that are set once and forgotten — whether the paper in the tray
+ * already carries the letterhead, saving a copy, the AI draft — sit behind
+ * More. Both print choices are remembered on this computer.
  */
 export function StaffReport({
-  visitId, data, canRelease, labName, portalLink, delivered, printed, waTemplate,
+  visitId, data, canRelease, labName, portalLink, delivered, printed, waTemplate, patientEmail,
 }: {
   visitId: string;
   data: ReportData;
@@ -43,6 +52,8 @@ export function StaffReport({
   printed: boolean;
   /** The lab's own WhatsApp wording, when it has saved one. */
   waTemplate: string | null;
+  /** Shown under Email, so a missing address is seen before the click, not after. */
+  patientEmail: string | null;
 }) {
   const { t } = useI18n();
   const toast = useToast();
@@ -137,9 +148,11 @@ export function StaffReport({
     } else toast('error', res.error);
   }
 
+  const sending = busy === 'WHATSAPP' || busy === 'SMS' || busy === 'EMAIL' || busy === 'PRINT';
+
   return (
     <div className="page">
-      <div className="no-print space-y-3">
+      <div className="no-print">
         <PageHeader
           title={t('report.title')}
           subtitle={`${data.patientName} · #${data.slipNo}`}
@@ -151,65 +164,106 @@ export function StaffReport({
               ) : printed ? (
                 <Badge tone="info">{t('report.printed')}</Badge>
               ) : null}
+
+              <Toggle
+                on={withHistory && data.hasHistory}
+                disabled={!data.hasHistory}
+                title={data.hasHistory ? undefined : t('report.noHistory')}
+                onClick={() => { const v = !withHistory; setWithHistory(v); remember(PREF_HISTORY, v); }}
+              >
+                <History className="h-3.5 w-3.5" /> {t('report.withHistory')}
+              </Toggle>
+
               <Button variant={delivered ? 'outline' : 'primary'} onClick={print}>
                 <Printer className="h-4 w-4" /> {t('report.print')}
               </Button>
-              {canRelease && !delivered && (
-                <>
-                  {data.mobile && (
-                    <Button variant="outline" onClick={() => deliver('WHATSAPP')} loading={busy === 'WHATSAPP'}>
-                      <MessageCircle className="h-4 w-4" /> {t('report.whatsapp')}
-                    </Button>
-                  )}
-                  <Button variant="outline" onClick={() => deliver('PRINT')} loading={busy === 'PRINT'}>
-                    <HandHeart className="h-4 w-4" /> {t('report.markHanded')}
-                  </Button>
-                </>
-              )}
+
+              <Menu
+                label={t('report.send')}
+                icon={<Send className="h-4 w-4" />}
+                loading={sending}
+                title={t('report.sendTitle')}
+              >
+                {(close) => (<>
+                  <Row
+                    icon={MessageCircle}
+                    label={t('report.whatsapp')}
+                    sub={data.mobile ?? t('ready.noMobile')}
+                    disabled={!data.mobile || !canRelease}
+                    onClick={() => { close(); void deliver('WHATSAPP'); }}
+                  />
+                  <Row
+                    icon={MessageSquare}
+                    label={t('report.sms')}
+                    sub={!services.sms ? t('report.smsOff') : data.mobile ?? t('ready.noMobile')}
+                    disabled={!services.sms || !data.mobile || !canRelease}
+                    onClick={() => { close(); void smsReport(); }}
+                  />
+                  <Row
+                    icon={Mail}
+                    label={t('report.email')}
+                    sub={!services.email ? t('report.emailOff') : patientEmail ?? t('report.noEmail')}
+                    disabled={!services.email || !patientEmail || !canRelease}
+                    onClick={() => { close(); void emailReport(); }}
+                  />
+                  {canRelease && !delivered && (<>
+                    <hr className="my-1.5 border-line" />
+                    <Row
+                      icon={HandHeart}
+                      label={t('report.markHanded')}
+                      sub={t('report.handedSub')}
+                      onClick={() => { close(); void deliver('PRINT'); }}
+                    />
+                  </>)}
+                </>)}
+              </Menu>
+
+              <Menu
+                label={t('report.more')}
+                icon={<MoreHorizontal className="h-4 w-4" />}
+                iconOnly
+                variant="ghost"
+                loading={busy === 'pdf' || busy === 'png' || busy === 'AI'}
+              >
+                {(close) => (<>
+                  <Heading>{t('report.printOptions')}</Heading>
+                  <Row
+                    icon={Stamp}
+                    label={t('report.optLetterhead')}
+                    sub={t('report.optLetterheadOff')}
+                    checked={letterhead}
+                    onClick={() => { const v = !letterhead; setLetterhead(v); remember(PREF_LETTERHEAD, v); }}
+                  />
+                  <hr className="my-1.5 border-line" />
+                  <Heading>{t('report.saveCopy')}</Heading>
+                  <Row
+                    icon={FileDown}
+                    label={t('report.downloadPdf')}
+                    sub={t('report.pdfSub')}
+                    onClick={() => { close(); void save('pdf'); }}
+                  />
+                  <Row
+                    icon={ImageDown}
+                    label={t('report.downloadPng')}
+                    sub={t('report.pngSub')}
+                    onClick={() => { close(); void save('png'); }}
+                  />
+                  <hr className="my-1.5 border-line" />
+                  <Row
+                    icon={Sparkles}
+                    label={t('ai.analyze')}
+                    sub={services.ai ? t('report.aiSub') : t('ai.off')}
+                    disabled={!services.ai}
+                    onClick={() => { close(); void aiDraft(); }}
+                  />
+                </>)}
+              </Menu>
             </>
           }
         />
-
-        {/* How this copy is laid out, and the files it can be saved as. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Toggle
-            on={withHistory}
-            disabled={!data.hasHistory}
-            title={data.hasHistory ? undefined : t('report.noHistory')}
-            onClick={() => { const v = !withHistory; setWithHistory(v); remember(PREF_HISTORY, v); }}
-          >
-            <History className="h-3.5 w-3.5" /> {t('report.withHistory')}
-          </Toggle>
-          <Toggle
-            on={letterhead}
-            onClick={() => { const v = !letterhead; setLetterhead(v); remember(PREF_LETTERHEAD, v); }}
-          >
-            <Stamp className="h-3.5 w-3.5" /> {t('report.letterhead')}
-          </Toggle>
-          <span className="mx-1 hidden h-5 w-px bg-line sm:block" aria-hidden />
-          <Button variant="ghost" size="sm" onClick={() => save('pdf')} loading={busy === 'pdf'}>
-            <FileDown className="h-3.5 w-3.5" /> {t('report.downloadPdf')}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => save('png')} loading={busy === 'png'}>
-            <ImageDown className="h-3.5 w-3.5" /> {t('report.downloadPng')}
-          </Button>
-          {canRelease && (
-            <>
-              <Button variant="ghost" size="sm" onClick={emailReport} loading={busy === 'EMAIL'} disabled={!services.email} title={services.email ? undefined : t('report.emailOff')}>
-                <Mail className="h-3.5 w-3.5" /> {t('report.email')}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={smsReport} loading={busy === 'SMS'} disabled={!services.sms || !data.mobile} title={services.sms ? undefined : t('report.smsOff')}>
-                <MessageSquare className="h-3.5 w-3.5" /> {t('report.sms')}
-              </Button>
-            </>
-          )}
-          <Button variant="ghost" size="sm" onClick={aiDraft} loading={busy === 'AI'} disabled={!services.ai} title={services.ai ? undefined : t('ai.off')}>
-            <Sparkles className="h-3.5 w-3.5" /> {t('ai.analyze')}
-          </Button>
-          {!data.hasHistory && <span className="text-xs text-subtle">{t('report.noHistory')}</span>}
-        </div>
       </div>
-      <div ref={sheet}>
+
+      <div ref={sheet} className="mt-3">
         {ready ? (
           <ReportDocument data={data} showActions={false} withHistory={withHistory} letterhead={letterhead} />
         ) : (
@@ -238,6 +292,67 @@ export function StaffReport({
   );
 }
 
+/**
+ * A button with a panel under it. The panel is absolutely placed inside the
+ * header — nothing here is transformed or clipped, so it needs no portal — and
+ * closes on a click outside, on Escape, or on choosing something.
+ */
+function Menu({
+  label, icon, children, variant = 'outline', iconOnly = false, loading = false, title,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  children: (close: () => void) => React.ReactNode;
+  variant?: 'outline' | 'ghost';
+  iconOnly?: boolean;
+  loading?: boolean;
+  /** A heading inside the panel, when the panel needs one. */
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const close = () => setOpen(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={box} className="relative">
+      <Button
+        variant={variant}
+        onClick={() => setOpen((o) => !o)}
+        loading={loading}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={iconOnly ? label : undefined}
+        title={iconOnly ? label : undefined}
+      >
+        {icon}{!iconOnly && label}
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          aria-label={title ?? label}
+          className="absolute end-0 z-30 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-surface p-1.5 shadow-dropdown animate-scale-in"
+        >
+          {title && <Heading>{title}</Heading>}
+          {children(close)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A switch that shows its state without being opened: on is filled. */
 function Toggle({
   on, onClick, disabled, title, children,
 }: { on: boolean; onClick: () => void; disabled?: boolean; title?: string; children: React.ReactNode }) {
@@ -257,6 +372,52 @@ function Toggle({
       )}
     >
       {children}
+    </button>
+  );
+}
+
+function Heading({ children }: { children: React.ReactNode }) {
+  return <div className="px-2.5 pb-1 pt-1.5 text-[10.5px] font-bold uppercase tracking-wider text-subtle">{children}</div>;
+}
+
+/**
+ * One line of a panel: what it does, and under it where it goes or why it
+ * cannot. A tick appears on the lines that are settings rather than actions.
+ */
+function Row({
+  icon: Icon, label, sub, onClick, disabled, checked, busy,
+}: {
+  icon: LucideIcon;
+  label: string;
+  sub?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  checked?: boolean;
+  busy?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-start transition-colors',
+        disabled ? 'cursor-not-allowed opacity-55' : 'hover:bg-surface-2',
+      )}
+    >
+      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', checked ? 'text-brand-600 dark:text-brand-300' : 'text-muted')} />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold text-strong">{label}</span>
+        {/* Wraps rather than truncates: the sub line is often the reason a row
+            is disabled, and half a reason helps nobody. */}
+        {sub && <span className="block break-words text-xs leading-snug text-muted">{sub}</span>}
+      </span>
+      {busy && <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-muted" />}
+      {checked !== undefined && (
+        <Check className={cn('mt-0.5 h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300', !checked && 'opacity-0')} />
+      )}
     </button>
   );
 }

@@ -16,13 +16,21 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   const session = await auth();
   if (!session?.user) redirect('/login');
 
+  // Three independent lookups the shell needs on every navigation, asked for
+  // together rather than one after another. The checks below still run in
+  // order, so a suspended lab is redirected before anything else is used.
+  const [access, mustChangePassword, features] = await Promise.all([
+    labAccessFor(session.user.tenantId),
+    needsPasswordChangeAction(),
+    getFeatures(),
+  ]);
+
   // A suspended lab is shut out at once, not when sessions expire; a lapsed one keeps read-only access.
-  const access = await labAccessFor(session.user.tenantId);
   if (access.level === 'SUSPENDED') redirect('/suspended');
 
   // An owner-issued password is a handover, not a credential. Nothing else in
   // the app is reachable until the person has chosen their own.
-  if (await needsPasswordChangeAction()) redirect('/set-password');
+  if (mustChangePassword) redirect('/set-password');
 
   // Partner labs and referring doctors sign in to their own portals, never the staff app.
   if (session.user.partnerLabId) redirect('/partner');
@@ -31,7 +39,6 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   const { name, role, branchName } = session.user;
   // The menu offers only what the lab's access allows today.
   const permissions = effectivePermissions(access.level, session.user.permissions ?? []);
-  const features = await getFeatures();
 
   return (
     <FeaturesProvider features={features}>

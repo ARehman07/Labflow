@@ -11,7 +11,9 @@ export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 export const refundSchema = z.object({
   invoiceId: z.string().min(1),
   amount: z.coerce.number().positive('Amount must be greater than zero'),
-  reason: z.string().max(200).optional(),
+  /** Required, like taking a payment back: a refund with no stated reason is the
+   *  one entry nobody can answer for when the day's cash is counted. */
+  reason: z.string().trim().min(3, 'Say why this refund is being given').max(200),
   accountId: z.string().optional(),
 });
 export type RefundInput = z.infer<typeof refundSchema>;

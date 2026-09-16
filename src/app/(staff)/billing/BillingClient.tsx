@@ -7,6 +7,8 @@ import { createPortal } from 'react-dom';
 import { Search, Wallet, AlertCircle, FileClock, Files, X, IdCard, Phone, CalendarDays, Stethoscope, FlaskConical, ArrowDownLeft, ArrowUpRight, type LucideIcon, MessageSquareText } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button, buttonVariants } from '@/components/ui/Button';
+import { ConfirmButton } from '@/components/ui/ConfirmButton';
+import { LoadError } from '@/components/ui/LoadError';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -59,11 +61,14 @@ export function BillingClient({
     if (id) setOpenId(id);
   }, []);
 
+  const [loadFailed, setLoadFailed] = useState(false);
   const load = useCallback((f: Filter, q?: string) => {
     setLoading(true);
     Promise.all([listInvoicesAction(f, q), getBillingSummaryAction()])
-      .then(([inv, sum]) => { setInvoices(inv); setSummary(sum); })
-      .catch(() => { setInvoices([]); })
+      .then(([inv, sum]) => { setInvoices(inv); setSummary(sum); setLoadFailed(false); })
+      // Keeping the rows already listed: an emptied table reads as "no invoices",
+      // which is a very different thing from "the request failed".
+      .catch(() => setLoadFailed(true))
       .finally(() => setLoading(false));
   }, []);
 
@@ -91,6 +96,8 @@ export function BillingClient({
         <SummaryTile icon={FileClock} tone="rose" label={t('billing.sumDue')} value={summary ? String(summary.dueCount) : '—'} />
         <SummaryTile icon={Files} tone="indigo" label={t('billing.sumTotal')} value={summary ? String(summary.total) : '—'} />
       </div>
+
+      {loadFailed && <LoadError onRetry={() => load(filter, query || undefined)} />}
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -531,7 +538,7 @@ function ActionForm({
       const res = mode === 'PAY'
         ? await recordPaymentAction({ invoiceId, amount, method, accountId: accountId || undefined })
         : mode === 'REFUND'
-          ? await issueRefundAction({ invoiceId, amount, reason: reason || undefined, accountId: accountId || undefined })
+          ? await issueRefundAction({ invoiceId, amount, reason, accountId: accountId || undefined })
           : await reversePaymentAction({ invoiceId, amount, reason, accountId: accountId || undefined });
       if (res.ok) onDone(res.txId);
       else setError(res.error);
@@ -567,9 +574,24 @@ function ActionForm({
       {error && <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger-text"><Tr text={error} /></p>}
       <div className="flex gap-2">
         <Button variant="ghost" onClick={onCancel}>{t('common.cancel')}</Button>
-        <Button className="flex-1" onClick={submit} loading={isPending} disabled={amount <= 0 || (mode === 'DUE' && reason.trim().length < 3)}>
-          {mode === 'PAY' ? t('billing.confirm') : mode === 'REFUND' ? t('billing.confirmRefund') : t('billing.confirmDue')}
-        </Button>
+        {/* Money leaving the till asks once, with the figure in the question —
+            reopening a released result already demands as much. */}
+        {mode === 'REFUND' ? (
+          <ConfirmButton
+            className="flex-1"
+            onConfirm={submit}
+            loading={isPending}
+            disabled={amount <= 0 || reason.trim().length < 3}
+            prompt={t('billing.refundPrompt').replace('{amount}', formatPkr(amount))}
+            confirmLabel={t('billing.confirmRefund')}
+          >
+            {t('billing.confirmRefund')}
+          </ConfirmButton>
+        ) : (
+          <Button className="flex-1" onClick={submit} loading={isPending} disabled={amount <= 0 || (mode === 'DUE' && reason.trim().length < 3)}>
+            {mode === 'PAY' ? t('billing.confirm') : t('billing.confirmDue')}
+          </Button>
+        )}
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import { tenantDb } from '@/core/db/context';
 import { pickRange, ageInDays, type AgeUnit, type ReferenceRangeDef } from './calc-engine';
 import { advanceSchema, saveResultsSchema } from './lab.schema';
 import { canEnterResults, type OrderLineStatus } from './workflow';
+import type { BoardCounts } from './board-stages';
 
 // ── DTOs ────────────────────────────────────────────────
 export interface WorkLineDTO {
@@ -76,19 +77,41 @@ export async function getBoardFilterOptionsAction(): Promise<{ departments: { id
   return { departments, partners };
 }
 
-export async function getWorkboardAction(query?: string, filters: BoardFilters = {}): Promise<WorkVisitDTO[]> {
+export interface BoardDTO {
+  visits: WorkVisitDTO[];
+  /** Visits the filter matches in full; the board draws at most BOARD_LIMIT of them. */
+  total: number;
+  /** True when there is more work than the board is showing. */
+  capped: boolean;
+  /** Patients and tests per stage, counted over everything matched — not over the cards on screen. */
+  counts: BoardCounts;
+}
+
+const EMPTY_COUNTS: BoardCounts = {
+  ALL: { patients: 0, tests: 0 },
+  COLLECT: { patients: 0, tests: 0 },
+  PROGRESS: { patients: 0, tests: 0 },
+  APPROVAL: { patients: 0, tests: 0 },
+  READY: { patients: 0, tests: 0 },
+};
+
+export async function getWorkboardAction(query?: string, filters: BoardFilters = {}): Promise<BoardDTO> {
   const user = await currentUser();
-  if (!user.branchId) return [];
+  if (!user.branchId) return { visits: [], total: 0, capped: false, counts: EMPTY_COUNTS };
   let from = isDay(filters.from) ? new Date(`${filters.from}T00:00:00`) : startOfDaysAgo(LAB_BOARD_DAYS);
   let to = new Date();
   if (isDay(filters.to)) { to = new Date(`${filters.to}T00:00:00`); to.setDate(to.getDate() + 1); }
   if (from > to) [from, to] = [to, from];
-  const visits = await labService.getWorkboard(user.branchId, from, to, query, {
+  const narrowed = {
     departmentId: filters.departmentId || undefined,
     testStatus: filters.testStatus || undefined,
     partnerLabId: filters.partnerLabId || undefined,
-  });
-  return visits.map((v) => ({
+  };
+  const [visits, stats] = await Promise.all([
+    labService.getWorkboard(user.branchId, from, to, query, narrowed),
+    labService.workboardCounts(user.branchId, from, to, query, narrowed),
+  ]);
+  const rows = visits.map((v) => ({
     id: v.id,
     slipNo: v.slipNo,
     patientName: v.patient.fullName,
@@ -115,6 +138,7 @@ export async function getWorkboardAction(query?: string, filters: BoardFilters =
       outsourcedTo: l.outsourcedTo?.name ?? null,
     })),
   }));
+  return { visits: rows, total: stats.total, capped: stats.total > rows.length, counts: stats.counts };
 }
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -131,6 +155,14 @@ export async function advanceManyAction(
   to: string,
 ): Promise<ActionResult & { advanced?: number }> {
   const user = await requirePermission('workflow.advance');
+  // Collecting is the one bulk move staff make constantly, and it has its own
+  // batched path; everything else is rare enough to go line by line.
+  if (to === 'SAMPLE_COLLECTED') {
+    const ids = orderLineIds.filter((id) => typeof id === 'string' && id.length > 0);
+    const res = await labService.collectMany(ids, user.id);
+    if (res.advanced === 0) return { ok: false, error: res.failed[0]?.error ?? 'Nothing could be advanced.' };
+    return { ok: true, advanced: res.advanced };
+  }
   let advanced = 0;
   const failures: string[] = [];
   for (const id of orderLineIds) {
@@ -469,17 +501,24 @@ export interface ApprovalDTO {
   culture: string | null;
 }
 
-export async function getApprovalsAction(): Promise<ApprovalDTO[]> {
+export interface ApprovalsDTO {
+  rows: ApprovalDTO[];
+  /** Everything waiting, which can be more than the queue shows. */
+  total: number;
+}
+
+export async function getApprovalsAction(): Promise<ApprovalsDTO> {
   const user = await requirePermission('result.approve');
-  if (!user.branchId) return [];
-  const [lines, selfVerifySetting, ownerOverride] = await Promise.all([
+  if (!user.branchId) return { rows: [], total: 0 };
+  const [lines, selfVerifySetting, ownerOverride, total] = await Promise.all([
     labService.getApprovals(user.branchId),
     labService.allowSelfVerify(),
     can('settings.manage'),
+    labService.approvalsTotal(user.branchId),
   ]);
   // The owner is never held by the rule; see labService.approve.
   const allowSelfVerify = selfVerifySetting || ownerOverride;
-  return lines.map((l) => {
+  const rows = lines.map((l) => {
     const byParam = new Map(l.results.map((r) => [r.parameterId, r]));
     // The range that applies to this patient, not whichever row sorts first —
     // a woman's haemoglobin checked against the male range reads as low.
@@ -525,6 +564,7 @@ export async function getApprovalsAction(): Promise<ApprovalDTO[]> {
         : null,
     };
   });
+  return { rows, total };
 }
 
 /**
@@ -773,11 +813,20 @@ export interface ReadyReportDTO {
   bookedAt: string;
 }
 
-export async function getReadyReportsAction(): Promise<ReadyReportDTO[]> {
+export interface ReadyReportsDTO {
+  rows: ReadyReportDTO[];
+  /** Everything waiting at this branch, which can exceed what the page lists. */
+  total: number;
+}
+
+export async function getReadyReportsAction(): Promise<ReadyReportsDTO> {
   const user = await currentUser();
-  if (!user.branchId || !(await mayRelease())) return [];
-  const visits = await labService.readyToHandOver(user.branchId);
-  return visits.map((v) => ({
+  if (!user.branchId || !(await mayRelease())) return { rows: [], total: 0 };
+  const [visits, total] = await Promise.all([
+    labService.readyToHandOver(user.branchId),
+    labService.readyToHandOverTotal(user.branchId),
+  ]);
+  const rows = visits.map((v) => ({
     visitId: v.id,
     slipNo: v.slipNo,
     patientName: v.patient.fullName,
@@ -787,4 +836,5 @@ export async function getReadyReportsAction(): Promise<ReadyReportDTO[]> {
     printed: v.orderLines.some((l) => l.status === 'PRINTED'),
     bookedAt: v.bookedAt.toISOString(),
   }));
+  return { rows, total };
 }

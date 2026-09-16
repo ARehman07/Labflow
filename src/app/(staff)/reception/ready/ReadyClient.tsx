@@ -21,8 +21,15 @@ import { markReportDeliveredAction, type ReadyReportDTO } from '@/modules/lab/la
  * owed a report — the question a receptionist is asked all day.
  */
 export function ReadyClient({
-  initial, labName, portalLink, waTemplate,
-}: { initial: ReadyReportDTO[]; labName: string; portalLink: string; waTemplate: string | null }) {
+  initial, total, labName, portalLink, waTemplate,
+}: {
+  initial: ReadyReportDTO[];
+  /** Everything waiting at this branch; the list itself is capped. */
+  total: number;
+  labName: string;
+  portalLink: string;
+  waTemplate: string | null;
+}) {
   const { t } = useI18n();
   const toast = useToast();
   const [items, setItems] = useState(initial);
@@ -49,6 +56,14 @@ export function ReadyClient({
   return (
     <div className="page">
       <PageHeader title={t('ready.title')} subtitle={t('ready.subtitle')} />
+
+      {/* Handing one over removes it from the list, so a silent cap would keep
+          promising an end that never comes. */}
+      {total > initial.length && (
+        <p className="-mt-1 text-xs font-medium text-warn-text" role="status">
+          {t('ready.capped').replace('{shown}', String(initial.length)).replace('{total}', String(total))}
+        </p>
+      )}
 
       {items.length === 0 ? (
         <Card className="flex flex-col items-center gap-3 px-6 py-14 text-center">

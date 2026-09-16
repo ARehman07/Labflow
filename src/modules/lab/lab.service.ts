@@ -1,6 +1,7 @@
 import { getFeatures } from '@/core/features/features.server';
 import { randomBytes } from 'crypto';
 import { tenantDb, currentTenantId } from '@/core/db/context';
+import { labPolicy } from '@/core/db/lab-policy';
 import { analyteKey, historyCutoff } from '@/modules/reporting/history';
 import { openCriticalNotifications } from './critical';
 import type { TenantTransactionClient } from '@/core/db/tenant';
@@ -66,8 +67,7 @@ async function completeVisitIfDone(visitId: string) {
 async function assertResultsEditable(orderLineId: string, from: OrderLineStatus, overrideLock: boolean) {
   if (from !== 'RESULT_SAVED' || overrideLock) return;
   const db = await tenantDb();
-  const tenant = await db.tenant.findUnique({ where: { id: await currentTenantId() }, select: { resultEditLockMins: true } });
-  const mins = tenant?.resultEditLockMins ?? 0;
+  const mins = (await labPolicy()).resultEditLockMins;
   if (mins <= 0) return;
   const saved = await db.workflowEvent.findFirst({
     where: { orderLineId, toState: 'RESULT_SAVED', NOT: { fromState: 'RESULT_SAVED' } },
@@ -84,6 +84,12 @@ export const labService = {
     branchId: string, from: Date, to: Date, query?: string,
     filters?: { departmentId?: string; testStatus?: string; partnerLabId?: string },
   ) => labRepository.workboard(branchId, from, to, query, filters),
+
+  /** What the same filter matches in full — the board only draws the newest slice. */
+  workboardCounts: async (
+    branchId: string, from: Date, to: Date, query?: string,
+    filters?: { departmentId?: string; testStatus?: string; partnerLabId?: string },
+  ) => labRepository.workboardCounts(branchId, from, to, query, filters),
 
   getEntry: async (orderLineId: string) => labRepository.orderLineForEntry(orderLineId),
 
@@ -229,11 +235,7 @@ export const labService = {
     // so the bench and the printed report never disagree about "last result".
     const codes = [...new Set(params.map((p) => p.analyteCode?.trim().toUpperCase()).filter((c): c is string => !!c))];
     const plainIds = params.filter((p) => !p.analyteCode?.trim()).map((p) => p.id);
-    const tenant = await db.tenant.findUniqueOrThrow({
-      where: { id: await currentTenantId() },
-      select: { reportHistoryMonths: true },
-    });
-    const since = historyCutoff(new Date(), tenant.reportHistoryMonths);
+    const since = historyCutoff(new Date(), (await labPolicy()).reportHistoryMonths);
     const rows = await db.resultValue.findMany({
       where: {
         OR: [
@@ -267,6 +269,8 @@ export const labService = {
 
   getApprovals: async (branchId: string) => labRepository.approvalsQueue(branchId),
 
+  approvalsTotal: async (branchId: string) => labRepository.approvalsTotal(branchId),
+
   /**
    * Record that a visit's report left the lab: printed at the counter, or
    * delivered (handed over, or sent). Only released tests move; anything still
@@ -297,6 +301,20 @@ export const labService = {
    * counter has to give out or send. A visit with any test still in the lab
    * is not listed: half a report is not ready.
    */
+  /** How many reports are waiting to be handed over, including any past the page limit. */
+  async readyToHandOverTotal(branchId: string) {
+    return (await tenantDb()).visit.count({
+      where: {
+        branchId,
+        status: 'OPEN',
+        orderLines: {
+          some: { status: { in: ['APPROVED', 'PRINTED'] } },
+          none: { status: { in: [...PENDING] } },
+        },
+      },
+    });
+  },
+
   async readyToHandOver(branchId: string) {
     return (await tenantDb()).visit.findMany({
       where: {
@@ -319,11 +337,7 @@ export const labService = {
 
   /** Whether the lab lets someone approve a result they entered themselves. */
   async allowSelfVerify(): Promise<boolean> {
-    const tenant = await (await tenantDb()).tenant.findUniqueOrThrow({
-      where: { id: await currentTenantId() },
-      select: { allowSelfVerify: true },
-    });
-    return tenant.allowSelfVerify;
+    return (await labPolicy()).allowSelfVerify;
   },
 
   /**
@@ -483,6 +497,111 @@ export const labService = {
   },
 
   /** Advance an order line one step (collect, start, print, etc.). */
+  /**
+   * Draw several tubes at once — what "Collect all" on the board actually is.
+   *
+   * The same rules as `transition`, in a handful of queries instead of a full
+   * transition each: tests sharing a specimen share a tube, a retake gets a
+   * fresh one, and a visit with nothing left to draw releases its queue token.
+   * A six-test slip used to cost around eighty round trips; the counter felt
+   * every one of them.
+   */
+  async collectMany(orderLineIds: string[], actorId: string) {
+    const db = await tenantDb();
+    const tenantId = await currentTenantId();
+    const lines = await db.orderLine.findMany({
+      where: { id: { in: orderLineIds } },
+      select: {
+        id: true, status: true, visitId: true,
+        visit: { select: { slipNo: true } },
+        test: { select: { specimenType: true } },
+      },
+    });
+
+    const ok: typeof lines = [];
+    const failed: { orderLineId: string; error: string }[] = [];
+    for (const id of orderLineIds) {
+      const line = lines.find((l) => l.id === id);
+      if (!line) { failed.push({ orderLineId: id, error: 'Order line not found' }); continue; }
+      try {
+        assertTransition(line.status as OrderLineStatus, 'SAMPLE_COLLECTED');
+        ok.push(line);
+      } catch (e) {
+        failed.push({ orderLineId: id, error: e instanceof Error ? e.message : 'Cannot collect' });
+      }
+    }
+    if (ok.length === 0) return { advanced: 0, failed };
+
+    const visitIds = [...new Set(ok.map((l) => l.visitId))];
+    await db.$transaction(async (tx) => {
+      const existing = await tx.sample.findMany({
+        where: { visitId: { in: visitIds } },
+        select: { id: true, visitId: true, specimenType: true },
+        orderBy: { collectedAt: 'desc' },
+      });
+      const tubeFor = new Map<string, string>();
+      const drawnBefore = new Map<string, number>();
+      for (const s of existing) {
+        const key = `${s.visitId}:${s.specimenType}`;
+        if (!tubeFor.has(key)) tubeFor.set(key, s.id);
+        drawnBefore.set(key, (drawnBefore.get(key) ?? 0) + 1);
+      }
+
+      const linesForTube = new Map<string, string[]>();
+      for (const l of ok) {
+        const spec = l.test.specimenType;
+        const key = `${l.visitId}:${spec}`;
+        // A retake is a fresh draw, so it never joins the tube already on the rack.
+        let sampleId = l.status === 'RETAKE' ? undefined : tubeFor.get(key);
+        if (!sampleId) {
+          const prior = drawnBefore.get(key) ?? 0;
+          const base = `${l.visit.slipNo}-${SPECIMEN_CODE[spec] ?? 'OTH'}-${l.visitId.slice(-4).toUpperCase()}`;
+          const created = await tx.sample.create({
+            data: {
+              tenantId,
+              visitId: l.visitId,
+              specimenType: spec,
+              barcode: prior > 0 ? `${base}-R${prior}` : base,
+              collectedAt: new Date(),
+              collectedById: actorId,
+            },
+          });
+          sampleId = created.id;
+          drawnBefore.set(key, prior + 1);
+          if (l.status !== 'RETAKE') tubeFor.set(key, sampleId);
+        }
+        linesForTube.set(sampleId, [...(linesForTube.get(sampleId) ?? []), l.id]);
+      }
+
+      for (const [sampleId, ids] of linesForTube) {
+        await tx.orderLine.updateMany({ where: { id: { in: ids } }, data: { status: 'SAMPLE_COLLECTED', sampleId } });
+      }
+      await tx.workflowEvent.createMany({
+        data: ok.map((l) => ({
+          tenantId, orderLineId: l.id, fromState: l.status as OrderLineStatus,
+          toState: 'SAMPLE_COLLECTED' as OrderLineStatus, actorId, note: null,
+        })),
+      });
+
+      // A visit with nothing left to draw is finished at the chair.
+      const stillToDraw = await tx.orderLine.groupBy({
+        by: ['visitId'],
+        where: { visitId: { in: visitIds }, status: { in: ['BOOKED', 'RETAKE'] } },
+        _count: { _all: true },
+      });
+      const waiting = new Set(stillToDraw.map((r) => r.visitId));
+      const done = visitIds.filter((v) => !waiting.has(v));
+      if (done.length > 0) {
+        await tx.queueToken.updateMany({ where: { visitId: { in: done }, status: { not: 'DONE' } }, data: { status: 'DONE' } });
+      }
+    });
+
+    for (const visitId of visitIds) await completeVisitIfDone(visitId);
+    const { stockService } = await import('@/modules/stock/stock.service');
+    for (const l of ok) await stockService.consumeFor(l.id, actorId);
+    return { advanced: ok.length, failed };
+  },
+
   async transition(orderLineId: string, to: OrderLineStatus, actorId: string, note?: string) {
     const line = await (await tenantDb()).orderLine.findUnique({
       where: { id: orderLineId },
@@ -705,11 +824,7 @@ export const labService = {
     const enteredByThisUser = line.results.some((r) => r.enteredById === approver.id)
       || (isCulture && line.workflowEvents[0]?.actorId === approver.id);
     if (enteredByThisUser && !opts.ownerOverride) {
-      const tenant = await (await tenantDb()).tenant.findUniqueOrThrow({
-        where: { id: await currentTenantId() },
-        select: { allowSelfVerify: true },
-      });
-      if (!tenant.allowSelfVerify) {
+      if (!(await labPolicy()).allowSelfVerify) {
         throw new Error('Separation of duties: you cannot approve results you entered. Ask the lab owner, or someone else who can approve.');
       }
     }

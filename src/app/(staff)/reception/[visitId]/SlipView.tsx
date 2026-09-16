@@ -79,6 +79,16 @@ export function SlipView({ data }: { data: SlipData }) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [modifying, setModifying] = useState(false);
+  // Scanned with a phone, a QR holding "LabFlow|Slip:00014|MR:…" shows the
+  // patient a line of text and does nothing. It carries the portal link
+  // instead: their lab, their booking, one tap from their report. The slip
+  // number is still in it, so the counter's scanner reads it exactly as
+  // before. Nothing identifying goes into the link — seeing a result still
+  // needs a code sent to the patient's own number.
+  const slipQr = data.showPortal
+    ? `${data.portalUrl}?lab=${encodeURIComponent(data.labCode)}&slip=${data.slipNo}`
+    : `LabFlow|Slip:${data.slipNo}|MR:${data.mrNo}`;
+
   const cancelled = data.status === 'CANCELLED';
   const editable = !cancelled && (data.can.modify || data.can.cancel);
   const canModifySlip = !cancelled && (data.can.modify || (data.can.reopen && data.releasedCount > 0));
@@ -148,7 +158,7 @@ export function SlipView({ data }: { data: SlipData }) {
                   data={data.letterhead}
                   docLabel={t('slip.title')}
                   docNumber={data.slipNo}
-                  right={<QrCode value={`LabFlow|Slip:${data.slipNo}|MR:${data.mrNo}`} size={64} />}
+                  right={<QrCode value={slipQr} size={64} label={data.showPortal ? t('slip.onlineTitle') : undefined} />}
                 />
               </td>
             </tr>
@@ -272,30 +282,30 @@ export function SlipView({ data }: { data: SlipData }) {
 
               </td>
             </tr>
+
+            {data.showPortal && (
+            <tr><td className="p-0">
+              {/* Inside the table on purpose: the footer's height is reserved by
+                  the <tfoot> spacer below, and only what the table lays out gets
+                  that room. Outside it, this box printed straight over the
+                  running footer at the foot of the page. */}
+              <div className="mt-5 break-inside-avoid rounded-lg border border-dashed border-line-strong px-4 py-3 text-sm print:py-2 print:text-[11px]">
+                <div className="font-semibold text-strong">{t('slip.onlineTitle')}</div>
+                <div className="text-muted">{t('slip.onlineBodyTop').replace('{url}', data.portalUrl)}</div>
+                <div className="mt-1 flex flex-wrap gap-x-5 gap-y-0.5">
+                  <span className="text-muted">{t('portal.labCode')}: <b className="font-mono tracking-wider text-strong">{data.labCode}</b></span>
+                  <span className="text-muted">{t('portal.mobile')}: <b className="font-mono text-strong">{data.mobile ?? '—'}</b></span>
+                </div>
+              </div>
+            </td></tr>
+            )}
           </tbody>
 
           {/* Reserves the fixed footer's height at the foot of every page. */}
           <tfoot className="print-foot-spacer hidden print:table-footer-group">
-            <tr><td className="p-0"><div className="h-[20mm]" /></td></tr>
+            <tr><td className="p-0"><div className="h-[14mm]" /></td></tr>
           </tfoot>
         </table>
-
-        {data.showPortal && (<>
-        {/* The portal asks for a lab code "printed on your booking slip" — so it is.
-            The QR carries only the portal address and the lab code; the
-            patient's number is never put into a link. */}
-        <div className="mt-5 flex items-center gap-4 rounded-lg border border-dashed border-line-strong px-4 py-3 print:py-2">
-          <QrCode value={`${data.portalUrl}?lab=${encodeURIComponent(data.labCode)}`} size={56} />
-          <div className="min-w-0 text-sm print:text-[11px]">
-            <div className="font-semibold text-strong">{t('slip.onlineTitle')}</div>
-            <div className="text-muted">{t('slip.onlineBody').replace('{url}', data.portalUrl)}</div>
-            <div className="mt-1 flex flex-wrap gap-x-5 gap-y-0.5">
-              <span className="text-muted">{t('portal.labCode')}: <b className="font-mono tracking-wider text-strong">{data.labCode}</b></span>
-              <span className="text-muted">{t('portal.mobile')}: <b className="font-mono text-strong">{data.mobile ?? '—'}</b></span>
-            </div>
-          </div>
-        </div>
-        </>)}
 
         <div className="print-running-foot mt-6 border-t border-line pt-2">
           <div className="flex items-baseline justify-between gap-6 text-[10px] text-subtle">

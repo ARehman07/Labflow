@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { tenantDb, currentTenantId } from '@/core/db/context';
+import { labPolicy } from '@/core/db/lab-policy';
 import { billingRepository } from './billing.repository';
 import type { RecordPaymentInput, RefundInput, ReversePaymentInput } from './billing.schema';
 import { statusFor, statusAfterRefund } from './invoice-status';
@@ -211,8 +212,7 @@ export const billingService = {
     // The refund window: money handed back long after the visit is a decision
     // for the owner, not the counter.
     if (!opts.overrideWindow) {
-      const tenant = await (await tenantDb()).tenant.findUnique({ where: { id: await currentTenantId() }, select: { refundWindowHours: true } });
-      const hours = tenant?.refundWindowHours ?? 0;
+      const hours = (await labPolicy()).refundWindowHours;
       if (hours > 0 && Date.now() - invoice.visit.bookedAt.getTime() > hours * 3_600_000) {
         throw new Error(`Refunds close ${hours} ${hours === 1 ? 'hour' : 'hours'} after booking. Ask the lab owner to issue this one.`);
       }

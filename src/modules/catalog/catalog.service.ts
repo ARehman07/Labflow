@@ -36,22 +36,40 @@ async function groupPrices(rateGroupId: string | null | undefined, testIds: stri
  *  search query (name or code). A rate group's price replaces the branch price
  *  for tests it lists. Read-only catalog access shared across modules. */
 export async function listTests(branchId: string | null, query?: string, rateGroupId?: string | null): Promise<TestListItem[]> {
-  const tests = await (await tenantDb()).test.findMany({
+  const db = await tenantDb();
+  // Two steps on purpose: rank over names and codes alone — that is all the
+  // ranking reads — then fetch departments and price history for the fifty that
+  // survive. One keystroke used to pull every test in the catalogue with all of
+  // its prices and its department.
+  const all = await db.test.findMany({
     where: { isActive: true },
-    include: { department: true, prices: true },
+    select: { id: true, code: true, name: true },
     orderBy: { name: 'asc' },
   });
   // Ranked in memory: case-insensitive on every database, code and initials first.
-  const matched = query ? searchTests(tests, query) : tests.slice(0, 50);
-  const group = await groupPrices(rateGroupId, matched.map((t) => t.id));
+  const matched = query ? searchTests(all, query) : all.slice(0, 50);
+  const ids = matched.map((t) => t.id);
+  if (ids.length === 0) return [];
+  const [detail, group] = await Promise.all([
+    db.test.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, department: { select: { name: true } }, prices: true },
+    }),
+    groupPrices(rateGroupId, ids),
+  ]);
+  const byId = new Map(detail.map((t) => [t.id, t]));
 
-  return matched.map((t) => ({
-    id: t.id,
-    code: t.code,
-    name: t.name,
-    departmentName: t.department.name,
-    price: group.get(t.id) ?? effectivePrice(t.prices, branchId),
-  }));
+  return matched.flatMap((t) => {
+    const d = byId.get(t.id);
+    if (!d) return [];
+    return [{
+      id: t.id,
+      code: t.code,
+      name: t.name,
+      departmentName: d.department.name,
+      price: group.get(t.id) ?? effectivePrice(d.prices, branchId),
+    }];
+  });
 }
 
 /** Prices for a specific set of test ids (used to compute a booking total

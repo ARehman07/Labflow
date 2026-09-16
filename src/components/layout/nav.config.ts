@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, FilePlus2, FileText, CreditCard as CardIcon, Ticket,
-  FlaskConical, AlertTriangle, BellRing,
+  FlaskConical, AlertTriangle, BellRing, ClipboardCheck,
   Wallet, Users2, Receipt,
   BarChart3, Settings, PackageCheck, Building2, FileSpreadsheet, ShieldCheck, Boxes, type LucideIcon,
 } from 'lucide-react';
@@ -49,6 +49,8 @@ export const GROUPS: NavGroup[] = [
     labelKey: 'navGroup.laboratory',
     items: [
       { href: '/lab', key: 'nav.lab', icon: FlaskConical, needs: ['sample.collect', 'result.enter', 'result.approve', 'workflow.advance'] },
+      // The pathologist's whole job. It used to exist only as a tab inside /lab.
+      { href: '/lab/approvals', key: 'lab.approvals', icon: ClipboardCheck, badge: 'approvals', urgent: true, needs: ['result.approve'] },
       { href: '/lab/critical', key: 'nav.critical', icon: AlertTriangle, badge: 'critical', urgent: true, needs: ['critical.manage'], feature: 'lab.critical' },
       { href: '/lab/notifiable', key: 'nav.notifiable', icon: BellRing, badge: 'notifiable', needs: ['notifiable.manage'], feature: 'lab.notifiable' },
       { href: '/lab/qc', key: 'nav.qc', icon: ShieldCheck, needs: ['qc.manage', 'result.enter', 'result.approve'], feature: 'lab.qc' },
@@ -79,7 +81,7 @@ export const GROUPS: NavGroup[] = [
  * Anything this person cannot open is skipped and the next allowed page fills
  * the slot, so every role gets four useful tabs.
  */
-const PHONE_PREFERENCE = ['/dashboard', '/reception', '/lab', '/billing', '/queue', '/family-cards', '/lab/critical', '/insights'];
+const PHONE_PREFERENCE = ['/dashboard', '/reception', '/lab', '/lab/approvals', '/billing', '/queue', '/family-cards', '/lab/critical', '/insights'];
 
 export function visibleGroups(permissions: string[], features: Features = ALL_FEATURES_ON): NavGroup[] {
   const allowed = (item: NavItem) =>

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { Tv, Ticket, Megaphone, MonitorPlay, Droplet, ChevronRight, X, Info } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
+import { usePoll } from '@/lib/use-poll';
+import { LoadError } from '@/components/ui/LoadError';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
@@ -19,6 +21,7 @@ export function QueueClient({ canManage }: { canManage: boolean }) {
   // in today's queue (numbers restart daily), so they are pointed to instead.
   const [earlier, setEarlier] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [isPending, startTransition] = useTransition();
   const busy = useRef(false); // in-flight guard — prevents double-advance from duplicate clicks
 
@@ -30,16 +33,12 @@ export function QueueClient({ canManage }: { canManage: boolean }) {
 
   const load = useCallback(() => {
     getQueueAction()
-      .then((r) => { setTokens(r.tokens); setNowServing(r.nowServing); setEarlier(r.earlierAwaitingCollection); })
-      .catch(() => {})
+      .then((r) => { setTokens(r.tokens); setNowServing(r.nowServing); setEarlier(r.earlierAwaitingCollection); setLoadFailed(false); })
+      .catch(() => setLoadFailed(true))
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    load();
-    const id = setInterval(load, 5000);
-    return () => clearInterval(id);
-  }, [load]);
+  usePoll(load, 5000);
 
   const callNext = () => {
     if (busy.current) return;
@@ -119,6 +118,8 @@ export function QueueClient({ canManage }: { canManage: boolean }) {
           <Info className="h-3.5 w-3.5" /> {t('queue.howTitle')}
         </button>
       )}
+
+      {loadFailed && <LoadError onRetry={load} />}
 
       {/* Serving control */}
       <Card className="overflow-hidden p-0">

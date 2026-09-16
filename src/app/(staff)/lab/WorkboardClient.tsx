@@ -1,7 +1,7 @@
 'use client';
 
 import { useFeatures } from '@/core/features/FeaturesProvider';
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
@@ -13,6 +13,7 @@ import { Select } from '@/components/ui/Select';
 import { listOutwardPartnersAction } from '@/modules/partners/partners.actions';
 import { getQueueAction, callNextAction, type QueueTokenRow } from '@/modules/queue/queue.actions';
 import { useI18n } from '@/core/i18n/I18nProvider';
+import { usePoll } from '@/lib/use-poll';
 import { Button } from '@/components/ui/Button';
 import { ACCENT, type Accent } from '@/components/ui/List';
 import { cn } from '@/lib/utils';
@@ -29,7 +30,9 @@ import {
   type WorkVisitDTO,
   type WorkLineDTO,
 } from '@/modules/lab/lab.actions';
+import type { BoardCounts } from '@/modules/lab/board-stages';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { LoadError } from '@/components/ui/LoadError';
 
 /**
  * One card per patient, all of their tests inside it.
@@ -88,6 +91,10 @@ const STAGE_BY_STATUS = new Map<string, Stage>(
   STAGES.flatMap((s) => s.statuses.map((st) => [st, s] as const)),
 );
 const OTHER_STAGE = STAGES[STAGES.length - 1];
+/** Statuses in workflow order, for the headings inside a card. */
+const STATUS_ORDER = new Map<string, number>(
+  STAGES.flatMap((s, si) => s.statuses.map((st, i) => [st, si * 100 + i] as const)),
+);
 const stageOf = (status: string) => STAGE_BY_STATUS.get(status) ?? OTHER_STAGE;
 
 const READY = new Set(['APPROVED', 'PRINTED', 'DELIVERED']);
@@ -119,8 +126,21 @@ export function WorkboardClient() {
   const [filter, setFilter] = useState<FilterKey>(
     initial && FILTER_STAGES.some((s) => s.key === initial) ? (initial as FilterKey) : 'ALL',
   );
-  const [loading, setLoading] = useState(true);
+  // Skeletons belong to the first load only. After that the board swaps cards
+  // in place: a poll, a reconcile after an action or a new search must never
+  // blank the list under the person working on it.
+  const [firstLoad, setFirstLoad] = useState(true);
+  // Counted by the server over everything the filter matches. The chips used to
+  // tally the cards that loaded, so on a busy branch they under-reported the
+  // work — the one number a phlebotomist must be able to trust.
+  const [counts, setCounts] = useState<BoardCounts | null>(null);
+  const [capped, setCapped] = useState<{ shown: number; total: number } | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [, startTransition] = useTransition();
+  // Which rows are waiting on the server, so each button can show its own wait.
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const visitsRef = useRef(visits);
+  visitsRef.current = visits;
 
   // Narrowing the board: a date range beyond the usual 30 days, a department,
   // one test status, or one partner lab's patients.
@@ -134,15 +154,37 @@ export function WorkboardClient() {
     if (filtersOpen && options.departments.length === 0) getBoardFilterOptionsAction().then(setOptions).catch(() => {});
   }, [filtersOpen, options.departments.length]);
 
-  const load = useCallback((q?: string) => {
-    setLoading(true);
-    getWorkboardAction(q, filtersRef.current).then(setVisits).catch(() => setVisits([])).finally(() => setLoading(false));
+  const load = useCallback(async (q?: string) => {
+    try {
+      const board = await getWorkboardAction(q, filtersRef.current);
+      setVisits(board.visits);
+      setCounts(board.counts);
+      setCapped(board.capped ? { shown: board.visits.length, total: board.total } : null);
+      setLoadFailed(false);
+    } catch {
+      // The cards already on screen are kept: stale work is more use than a
+      // blank board, as long as the failure is stated.
+      setLoadFailed(true);
+    } finally {
+      setFirstLoad(false);
+    }
   }, []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(query || undefined); }, [filters]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => load(query || undefined), [load]);
+  // One place fetches the board: the first paint, a changed filter, or typing
+  // that has paused. Three separate effects used to fire three requests before
+  // the first card was even drawn.
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      void load(queryRef.current || undefined);
+      return;
+    }
+    const id = setTimeout(() => void load(queryRef.current || undefined), 250);
+    return () => clearTimeout(id);
+  }, [query, filters, load]);
 
   // The waiting room, from the bench. Whoever draws the blood is the one who
   // calls the next patient in, and walking to the Queue screen to do it meant
@@ -152,11 +194,7 @@ export function WorkboardClient() {
   const loadQueue = useCallback(() => {
     getQueueAction().then((r) => setQueue({ tokens: r.tokens, nowServing: r.nowServing })).catch(() => setQueue(null));
   }, []);
-  useEffect(() => {
-    loadQueue();
-    const id = setInterval(loadQueue, 15000);
-    return () => clearInterval(id);
-  }, [loadQueue]);
+  usePoll(loadQueue, 15000);
 
   function callNext() {
     if (calling) return;
@@ -164,82 +202,89 @@ export function WorkboardClient() {
     callNextAction()
       .then((r) => { if (!r.ok) toast('error', t('lab.callFailed')); })
       .catch(() => toast('error', t('lab.callFailed')))
-      .finally(() => { setCalling(false); loadQueue(); load(query || undefined); });
+      .finally(() => { setCalling(false); void loadQueue(); void load(queryRef.current || undefined); });
   }
-  const debounce = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => {
-    clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => load(query || undefined), 300);
-    return () => clearTimeout(debounce.current);
-  }, [query, load]);
 
-  function advance(orderLineId: string, to: string) {
-    if (to === '__reload__') { load(query || undefined); return; }
-    startTransition(async () => {
-      const res = await advanceAction({ orderLineId, to });
-      if (res.ok) { load(query || undefined); loadQueue(); }
-      else toast('error', res.error);
+  /** Show the change at once, then let the server's answer settle it. */
+  const patchLines = useCallback((ids: string[], patch: Partial<WorkLineDTO>) => {
+    const touched = new Set(ids);
+    setVisits((vs) => vs.map((v) => (v.lines.some((l) => touched.has(l.id))
+      ? { ...v, lines: v.lines.map((l) => (touched.has(l.id) ? { ...l, ...patch } : l)) }
+      : v)));
+  }, []);
+
+  /**
+   * The row moves the moment it is pressed. The server is asked straight after,
+   * and the board reconciles from its answer; a refusal puts the old rows back
+   * and says why, so nothing is quietly wrong.
+   */
+  const act = useCallback(async (
+    ids: string[],
+    patch: Partial<WorkLineDTO>,
+    run: () => Promise<{ ok: true } | { ok: false; error: string }>,
+    done?: string,
+  ) => {
+    const before = visitsRef.current;
+    setBusy((b) => ({ ...b, ...Object.fromEntries(ids.map((id) => [id, true])) }));
+    patchLines(ids, patch);
+    let res: { ok: true } | { ok: false; error: string };
+    try {
+      res = await run();
+    } catch {
+      res = { ok: false, error: t('lab.callFailed') };
+    }
+    setBusy((b) => {
+      const next = { ...b };
+      for (const id of ids) delete next[id];
+      return next;
     });
-  }
+    if (!res.ok) {
+      setVisits(before);
+      toast('error', res.error);
+      return false;
+    }
+    if (done) toast('success', done);
+    void load(queryRef.current || undefined);
+    void loadQueue();
+    return true;
+  }, [load, loadQueue, patchLines, t, toast]);
 
-  function collectAll(ids: string[]) {
-    startTransition(async () => {
-      const res = await advanceManyAction(ids, 'SAMPLE_COLLECTED');
-      if (res.ok) { load(query || undefined); loadQueue(); }
-      else toast('error', res.error);
+  const advance = useCallback((orderLineId: string, to: string) => {
+    if (to === '__reload__') { void load(queryRef.current || undefined); return; }
+    startTransition(() => {
+      void act([orderLineId], { status: to }, () => advanceAction({ orderLineId, to }));
     });
-  }
+  }, [act, load]);
 
-  function undoCollect(orderLineId: string) {
-    startTransition(async () => {
-      const res = await undoCollectAction(orderLineId);
-      if (res.ok) { toast('success', t('lab.undone')); load(query || undefined); loadQueue(); }
-      else toast('error', res.error);
+  const collectAll = useCallback((ids: string[]) => {
+    startTransition(() => {
+      void act(ids, { status: 'SAMPLE_COLLECTED' }, () => advanceManyAction(ids, 'SAMPLE_COLLECTED'));
     });
-  }
+  }, [act]);
 
-  async function retake(orderLineId: string, reason: string) {
-    const res = await requestRetakeAction(orderLineId, reason);
-    if (res.ok) { toast('success', t('lab.retakeDone')); load(query || undefined); loadQueue(); }
-    else toast('error', res.error);
-    return res.ok;
-  }
+  const undoCollect = useCallback((orderLineId: string) => {
+    startTransition(() => {
+      void act([orderLineId], { status: 'BOOKED' }, () => undoCollectAction(orderLineId), t('lab.undone'));
+    });
+  }, [act, t]);
 
-  async function delay(orderLineId: string, reason: string) {
-    const res = await markDelayedAction(orderLineId, reason);
-    if (res.ok) { toast('success', t('lab.delayDone')); load(query || undefined); }
-    else toast('error', res.error);
-    return res.ok;
-  }
+  const retake = useCallback(
+    (orderLineId: string, reason: string) =>
+      act([orderLineId], { status: 'RETAKE' }, () => requestRetakeAction(orderLineId, reason), t('lab.retakeDone')),
+    [act, t],
+  );
+
+  const delay = useCallback(
+    (orderLineId: string, reason: string) =>
+      act([orderLineId], { delayReason: reason }, () => markDelayedAction(orderLineId, reason), t('lab.delayDone')),
+    [act, t],
+  );
 
   const waitingTokens = queue?.tokens.filter((tk) => tk.status === 'WAITING').length ?? 0;
   const nextToken = queue?.tokens.find((tk) => tk.status === 'WAITING') ?? null;
   const serving = queue?.nowServing != null
     ? queue.tokens.find((tk) => tk.status === 'CALLED' && tk.number === queue.nowServing) ?? null
     : null;
-
-  // Two numbers per stage, because they answer different questions. Patients
-  // is how many people are waiting; tests is how much work that is. A single
-  // count of tests read as "2 patients to collect" when it was one patient
-  // with two tubes — exactly the confusion staff reported.
-  const counts = useMemo(() => {
-    const c: Record<FilterKey, number> = { ALL: 0, COLLECT: 0, PROGRESS: 0, APPROVAL: 0, READY: 0 };
-    const people: Record<FilterKey, number> = { ALL: 0, COLLECT: 0, PROGRESS: 0, APPROVAL: 0, READY: 0 };
-    for (const v of visits) {
-      const seen = new Set<string>();
-      for (const l of v.lines) {
-        c.ALL += 1;
-        const st = stageOf(l.status);
-        if (st.key !== 'OTHER') {
-          c[st.key as Exclude<StageKey, 'OTHER'>] += 1;
-          seen.add(st.key);
-        }
-      }
-      people.ALL += 1;
-      for (const k of seen) people[k as Exclude<StageKey, 'OTHER'>] += 1;
-    }
-    return { tests: c, patients: people };
-  }, [visits]);
 
   // Whole patient cards are kept; filtering picks which cards to show, never
   // which tests inside them. Cards needing attention float up: overdue first,
@@ -315,14 +360,16 @@ export function WorkboardClient() {
         {/* One line at every width: narrow screens swipe the chips sideways rather than stacking them. */}
         <div className="-my-1 flex min-w-0 flex-1 gap-1.5 no-scrollbar overflow-x-auto py-1">
           <FilterChip
-            label={t('lab.filterAll')} patients={counts.patients.ALL} tests={counts.tests.ALL}
+            label={t('lab.filterAll')}
+            patients={counts?.ALL.patients ?? 0}
+            tests={counts?.ALL.tests ?? 0}
             active={filter === 'ALL'} onClick={() => setFilter('ALL')}
           />
           {FILTER_STAGES.map((st) => (
             <FilterChip
               key={st.key} label={t(st.labelKey)}
-              patients={counts.patients[st.key as Exclude<StageKey, 'OTHER'>]}
-              tests={counts.tests[st.key as Exclude<StageKey, 'OTHER'>]}
+              patients={counts?.[st.key as Exclude<StageKey, 'OTHER'>].patients ?? 0}
+              tests={counts?.[st.key as Exclude<StageKey, 'OTHER'>].tests ?? 0}
               dot={st.accent.dot} active={filter === st.key} onClick={() => setFilter(st.key as FilterKey)}
             />
           ))}
@@ -335,6 +382,17 @@ export function WorkboardClient() {
           </Button>
         </div>
       </div>
+
+      {loadFailed && <LoadError onRetry={() => void load(queryRef.current || undefined)} />}
+
+      {/* There is more work than fits on the board: say so rather than let the
+          cards imply the day is done. */}
+      {capped && (
+        <p role="status" className="-mt-1 flex items-center gap-1.5 px-1 text-xs font-medium text-warn-text">
+          <Clock className="h-3.5 w-3.5 shrink-0" />
+          {t('lab.capped').replace('{shown}', String(capped.shown)).replace('{total}', String(capped.total))}
+        </p>
+      )}
 
       {filtersOpen && (
         <div className="card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -383,7 +441,7 @@ export function WorkboardClient() {
         </div>
       )}
 
-      {loading ? (
+      {firstLoad ? (
         <WorkboardSkeleton />
       ) : shown.length === 0 ? (
         <EmptyState label={filter === 'ALL' ? t('lab.noVisits') : t('lab.allClear')} />
@@ -392,7 +450,7 @@ export function WorkboardClient() {
           {columns.map((col, i) => (
             <div key={i} className="flex min-w-0 flex-1 flex-col gap-4">
               {col.map((v) => (
-                <PatientCard key={v.id} visit={v} onAdvance={advance} onCollectAll={collectAll} onUndo={undoCollect} onRetake={retake} onDelay={delay} />
+                <PatientCard key={v.id} visit={v} busy={busy} onAdvance={advance} onCollectAll={collectAll} onUndo={undoCollect} onRetake={retake} onDelay={delay} />
               ))}
             </div>
           ))}
@@ -417,12 +475,12 @@ function useColumnCount() {
 
 /** Rough pixel height of a card — only has to rank columns, not be exact. */
 function estimateCardHeight(v: WorkVisitDTO): number {
-  const stages = new Set(v.lines.map((l) => stageOf(l.status).key)).size;
+  const stages = new Set(v.lines.map((l) => l.status)).size;
   const lineExtras = v.lines.reduce((h, l) => h
     + (l.bookingRemarks ? 18 : 0) + (l.delayReason ? 18 : 0) + (l.outsourcedTo ? 18 : 0), 0);
   const signals = v.notes || v.lines.some(isOverdue) ? 30 + Math.ceil((v.notes?.length ?? 0) / 60) * 16 : 0;
-  return 150 + (v.token?.status === 'CALLED' ? 28 : 0) + signals
-    + (stages > 1 ? stages * 26 : 0) + v.lines.length * 50 + lineExtras;
+  return 140 + (v.token?.status === 'CALLED' ? 26 : 0) + signals
+    + stages * 26 + v.lines.length * 38 + lineExtras;
 }
 
 function FilterChip({
@@ -466,10 +524,12 @@ function FilterChip({
  * the card has one shape whether it holds one test or ten; the rarer row
  * actions sit behind that row's ⋯ menu.
  */
-function PatientCard({
-  visit, onAdvance, onCollectAll, onUndo, onRetake, onDelay,
+const PatientCard = memo(function PatientCard({
+  visit, busy, onAdvance, onCollectAll, onUndo, onRetake, onDelay,
 }: {
   visit: WorkVisitDTO;
+  /** Rows waiting on the server, keyed by test id. */
+  busy: Record<string, boolean>;
   onAdvance: (id: string, to: string) => void;
   onCollectAll: (ids: string[]) => void;
   onUndo: (id: string) => void;
@@ -486,13 +546,19 @@ function PatientCard({
   const [menusOpen, setMenusOpen] = useState(0);
   const holdLift = useCallback((open: boolean) => setMenusOpen((n) => Math.max(0, n + (open ? 1 : -1))), []);
 
-  // Tests bucketed by stage, in workflow order, empty buckets dropped.
-  const groups = useMemo(
-    () => STAGES
-      .map((s) => ({ stage: s, lines: visit.lines.filter((l) => stageOf(l.status).key === s.key) }))
-      .filter((g) => g.lines.length > 0),
-    [visit.lines],
-  );
+  // Tests bucketed by their exact status, in workflow order. By status and not
+  // by stage, because then the heading says what the rows are waiting on and
+  // the rows themselves need no second line repeating it under every name.
+  const groups = useMemo(() => {
+    const by = new Map<string, WorkLineDTO[]>();
+    for (const l of visit.lines) {
+      const at = by.get(l.status);
+      if (at) at.push(l); else by.set(l.status, [l]);
+    }
+    return [...by.entries()]
+      .sort((a, b) => (STATUS_ORDER.get(a[0]) ?? 999) - (STATUS_ORDER.get(b[0]) ?? 999))
+      .map(([status, lines]) => ({ status, stage: stageOf(status), lines }));
+  }, [visit.lines]);
 
   const ageSex = [
     visit.age != null ? `${visit.age} ${t('common.years')}` : null,
@@ -517,7 +583,7 @@ function PatientCard({
     >
       {/* Called is said once, in words, across the top — not squeezed into a pill beside the name. */}
       {called && (
-        <div className="flex items-center gap-2 bg-brand-600 px-4 py-1.5 text-xs font-semibold text-white">
+        <div className="flex items-center gap-2 bg-brand-600 px-4 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">
           <span className="relative flex h-2 w-2" aria-hidden>
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70 motion-reduce:animate-none" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-white" />
@@ -547,41 +613,49 @@ function PatientCard({
           <ActionMenu label={t('lab.cardActions')} items={cardMenu} />
         </div>
 
-        {(overdueCount > 0 || visit.notes) && (
-          <div className="flex flex-wrap gap-1.5">
-            {overdueCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-danger-soft px-2 py-0.5 text-xs font-semibold text-danger-text">
-                <Clock className="h-3 w-3" /> {t('lab.nTestsLate').replace('{n}', String(overdueCount))}
-              </span>
+        {/* Attention first, in one colour each, as text — a tinted box per signal
+            turned the top of the card into a stack of blocks. */}
+        {(overdueCount > 1 || visit.notes) && (
+          <div className="space-y-1 text-xs">
+            {/* Only worth summarising when more than one test is late: a single
+                late test already says so on its own row. */}
+            {overdueCount > 1 && (
+              <p className="flex items-center gap-1.5 font-semibold text-danger-text">
+                <Clock className="h-3 w-3 shrink-0" /> {t('lab.nTestsLate').replace('{n}', String(overdueCount))}
+              </p>
             )}
             {visit.notes && (
-              <span className="inline-flex max-w-full items-start gap-1.5 rounded-md bg-info-soft px-2 py-0.5 text-xs text-info-text">
+              <p className="flex items-start gap-1.5 text-muted">
                 <MessageSquareText className="mt-0.5 h-3 w-3 shrink-0" aria-label={t('reception.notes')} />
                 <span className="min-w-0 whitespace-pre-wrap break-words">{visit.notes}</span>
-              </span>
+              </p>
             )}
           </div>
         )}
 
-        <NextStepBand visitId={visit.id} step={step} onCollectAll={onCollectAll} />
+        <NextStepBand
+          visitId={visit.id}
+          step={step}
+          busy={step.kind === 'collectAll' && step.lines.some((l) => busy[l.id])}
+          onCollectAll={onCollectAll}
+        />
 
         <div>
           {groups.map((g) => (
-            <section key={g.stage.key} aria-label={t(g.stage.labelKey)}>
-              {/* A heading only earns its place when the tests are spread over stages. */}
-              {groups.length > 1 && (
-                <h3 className="flex items-center gap-1.5 pb-0.5 pt-3 text-[10.5px] font-bold uppercase tracking-wider text-subtle">
-                  <span className={cn('h-1.5 w-1.5 rounded-full', g.stage.accent.dot)} />
-                  {t(g.stage.labelKey)}
-                  <span className="tabular-nums text-muted">{g.lines.length}</span>
-                </h3>
-              )}
+            <section key={g.status} aria-label={t(`status.${g.status}`)}>
+              {/* Always drawn, so a card holding one test has the same shape as
+                  a card holding ten. The dot is the stage's colour. */}
+              <h3 className="flex items-center gap-1.5 pb-1 pt-3 text-[10.5px] font-bold uppercase tracking-wider text-subtle">
+                <span className={cn('h-1.5 w-1.5 rounded-full', g.stage.accent.dot)} />
+                {t(`status.${g.status}`)}
+              </h3>
               <ul className="divide-y divide-line">
                 {g.lines.map((l) => (
                   <TestRow
                     key={l.id}
                     line={l}
                     visitId={visit.id}
+                    busy={!!busy[l.id]}
                     onAdvance={onAdvance}
                     onUndo={onUndo}
                     onRetake={onRetake}
@@ -596,7 +670,7 @@ function PatientCard({
     </article>
     </CardHoldContext.Provider>
   );
-}
+});
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/u).filter(Boolean);
@@ -628,29 +702,53 @@ function TokenTicket({ number, called }: { number: number; called: boolean }) {
  * It is deliberately shaped like a tube and never a dot, so it cannot be read
  * as the stage colour that the headings use.
  */
-const TUBE: Record<string, { cap: string; container?: boolean }> = {
-  BLOOD: { cap: 'bg-violet-400' },
-  SERUM: { cap: 'bg-amber-400' },
-  PLASMA: { cap: 'bg-sky-400' },
-  URINE: { cap: 'bg-amber-500', container: true },
-  STOOL: { cap: 'bg-orange-700', container: true },
-  SWAB: { cap: 'bg-teal-500', container: true },
+const TUBE: Record<string, { kind: 'tube' | 'jar' | 'swab'; cap: string }> = {
+  BLOOD: { kind: 'tube', cap: 'fill-violet-400' },
+  SERUM: { kind: 'tube', cap: 'fill-amber-400' },
+  PLASMA: { kind: 'tube', cap: 'fill-sky-400' },
+  URINE: { kind: 'jar', cap: 'fill-amber-500' },
+  STOOL: { kind: 'jar', cap: 'fill-orange-700' },
+  SWAB: { kind: 'swab', cap: 'fill-teal-500' },
 };
 
 function TubeMarker({ specimen, className }: { specimen: string; className?: string }) {
   const { t } = useI18n();
-  const tube = TUBE[specimen];
+  const { kind, cap } = TUBE[specimen] ?? { kind: 'tube' as const, cap: 'fill-line-strong' };
   const label = t(`tube.${specimen}`);
+  // Glass is the card's own surface with a hairline edge, so the only colour on
+  // the marker is the cap and what is inside it.
+  const glass = 'fill-surface-2 stroke-line-strong';
   return (
-    <span role="img" aria-label={label} title={label} className={cn('inline-flex shrink-0 flex-col items-center', className)}>
-      <span className={cn('h-1.5 rounded-t-[2px]', tube?.container ? 'w-3.5' : 'w-2.5', tube?.cap ?? 'bg-line-strong')} />
-      <span
-        className={cn(
-          'border border-t-0 border-line-strong bg-surface',
-          tube?.container ? 'h-2.5 w-3.5 rounded-b-[3px]' : 'h-3.5 w-2 rounded-b-full',
-        )}
-      />
-    </span>
+    <svg
+      viewBox="0 0 16 19"
+      role="img"
+      className={cn('h-[19px] w-4 shrink-0', className)}
+      strokeWidth="1"
+      strokeLinejoin="round"
+    >
+      <title>{label}</title>
+      {kind === 'tube' && (
+        <>
+          <path d="M4.6 5.8h6.8v8.1a3.4 3.4 0 0 1-6.8 0z" className={glass} />
+          <path d="M4.6 10.4h6.8v3.5a3.4 3.4 0 0 1-6.8 0z" className={cn(cap, 'opacity-70')} stroke="none" />
+          <rect x="4.35" y="4.7" width="7.3" height="1.6" rx="0.6" className={cn(cap, 'opacity-80')} stroke="none" />
+          <rect x="3.8" y="1.3" width="8.4" height="4" rx="1.4" className={cap} stroke="none" />
+        </>
+      )}
+      {kind === 'jar' && (
+        <>
+          <path d="M3.4 5.6h9.2v9.15a2.25 2.25 0 0 1-2.25 2.25H5.65A2.25 2.25 0 0 1 3.4 14.75z" className={glass} />
+          <path d="M3.4 11h9.2v3.75A2.25 2.25 0 0 1 10.35 17H5.65A2.25 2.25 0 0 1 3.4 14.75z" className={cn(cap, 'opacity-55')} stroke="none" />
+          <rect x="2.4" y="1.4" width="11.2" height="4.2" rx="1.4" className={cap} stroke="none" />
+        </>
+      )}
+      {kind === 'swab' && (
+        <>
+          <path d="M8 7.5v9.5" className="stroke-line-strong" strokeWidth="1.6" strokeLinecap="round" />
+          <ellipse cx="8" cy="4.9" rx="3.1" ry="3.9" className={cap} stroke="none" />
+        </>
+      )}
+    </svg>
   );
 }
 
@@ -672,37 +770,30 @@ function nextStep(visit: WorkVisitDTO): NextStep {
 }
 
 function NextStepBand({
-  visitId, step, onCollectAll,
+  visitId, step, busy, onCollectAll,
 }: {
   visitId: string;
   step: NextStep;
+  busy: boolean;
   onCollectAll: (ids: string[]) => void;
 }) {
   const { t } = useI18n();
   if (step.kind === 'none') return null;
 
+  // The button says what it does, so the panel around it — a tint, a heading
+  // and a repeat of the tubes already drawn on every row — only added weight.
   if (step.kind === 'done') {
     return (
-      <div className="space-y-2 rounded-xl bg-ok-soft p-2.5">
-        <div className="text-[10.5px] font-bold uppercase tracking-wider text-ok-text">{t('lab.nextDone')}</div>
-        <Link href={`/lab/report/${visitId}`} className="block">
-          <Button variant="outline" className="w-full"><Printer className="h-4 w-4" /> {t('lab.openReport')}</Button>
-        </Link>
-      </div>
+      <Link href={`/lab/report/${visitId}`} className="block">
+        <Button variant="outline" className="w-full"><Printer className="h-4 w-4" /> {t('lab.openReport')}</Button>
+      </Link>
     );
   }
 
-  const specimens = [...new Set(step.lines.map((l) => l.specimenType))];
   return (
-    <div className="space-y-2 rounded-xl bg-brand-500/10 p-2.5">
-      <div className="flex items-center justify-between gap-2 text-[10.5px] font-bold uppercase tracking-wider text-brand-700 dark:text-brand-300">
-        <span>{t('lab.nextStage').replace('{stage}', t('lab.filterCollect'))}</span>
-        <span className="flex items-end gap-1.5">{specimens.map((sp) => <TubeMarker key={sp} specimen={sp} />)}</span>
-      </div>
-      <Button className="w-full" onClick={() => onCollectAll(step.lines.map((l) => l.id))}>
-        <Droplet className="h-4 w-4" /> {t('lab.collectAllSamples').replace('{n}', String(step.lines.length))}
-      </Button>
-    </div>
+    <Button className="w-full" loading={busy} onClick={() => onCollectAll(step.lines.map((l) => l.id))}>
+      <Droplet className="h-4 w-4" /> {t('lab.collectAllSamples').replace('{n}', String(step.lines.length))}
+    </Button>
   );
 }
 
@@ -880,11 +971,13 @@ type ReasonHandler = (orderLineId: string, reason: string) => Promise<boolean>;
 
 const RETAKEABLE = new Set(['SAMPLE_COLLECTED', 'SAMPLE_RECEIVED', 'IN_PROGRESS']);
 
-function TestRow({
-  line, onAdvance, onUndo, onRetake, onDelay,
+const TestRow = memo(function TestRow({
+  line, busy, onAdvance, onUndo, onRetake, onDelay,
 }: {
   line: WorkLineDTO;
   visitId: string;
+  /** This row is waiting on the server. */
+  busy: boolean;
   onAdvance: (id: string, to: string) => void;
   onUndo: (id: string) => void;
   onRetake: ReasonHandler;
@@ -948,6 +1041,7 @@ function TestRow({
     <Button
       variant="outline"
       size="sm"
+      loading={busy}
       onClick={cfg.advanceTo ? () => onAdvance(line.id, cfg.advanceTo!) : undefined}
     >
       <cfg.icon className="h-3.5 w-3.5" /> {t(cfg.labelKey)}
@@ -957,23 +1051,19 @@ function TestRow({
   return (
     <li className="py-2.5 last:pb-0">
       <div className="flex items-start gap-2.5">
-        <TubeMarker specimen={line.specimenType} className="mt-0.5" />
+        <TubeMarker specimen={line.specimenType} className="mt-px" />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
+          {/* The status is the heading above; the tube is drawn at the head of
+              the row. So the line carries the name and only what is wrong. */}
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <span className="break-words text-sm font-semibold text-strong">{line.testName}</span>
             {line.abnormal > 0 && (
               <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-danger-soft px-1.5 py-0.5 text-[10px] font-bold text-danger-text">
                 <AlertTriangle className="h-2.5 w-2.5" /> {line.abnormal}
               </span>
             )}
-          </div>
-          {/* Small print: the exact status and, when late, by how much. */}
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-subtle">
-            <span>{t(`status.${line.status}`)}</span>
-            <span aria-hidden>·</span>
-            <span>{t(`tube.${line.specimenType}`)}</span>
             {overdue && line.dueAt && (
-              <span className="font-semibold text-danger-text">· {t('lab.lateBy').replace('{t}', lateBy(line.dueAt))}</span>
+              <span className="shrink-0 text-xs font-semibold text-danger-text">{t('lab.lateBy').replace('{t}', lateBy(line.dueAt))}</span>
             )}
           </div>
           {line.bookingRemarks && (
@@ -1049,7 +1139,7 @@ function TestRow({
       )}
     </li>
   );
-}
+});
 
 function EmptyState({ label }: { label: string }) {
   return (

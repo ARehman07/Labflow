@@ -16,21 +16,27 @@ export interface NavCounts {
   notifiable: number;
   /** Reports released and waiting to be handed over at this branch. */
   ready: number;
+  /** Results entered and waiting for someone to release them. */
+  approvals: number;
 }
 
 export async function getNavCountsAction(): Promise<NavCounts> {
-  const [mayCritical, mayNotifiable, mayPrint, mayDeliver, user] = await Promise.all([
+  const [mayCritical, mayNotifiable, mayPrint, mayDeliver, mayApprove, user] = await Promise.all([
     can('critical.manage'),
     can('notifiable.manage'),
     can('report.print'),
     can('report.deliver'),
+    can('result.approve'),
     currentUser(),
   ]);
   const mayReady = (mayPrint || mayDeliver) && !!user.branchId;
-  if (!mayCritical && !mayNotifiable && !mayReady) return { critical: 0, notifiable: 0, ready: 0 };
+  const mayApprovals = mayApprove && !!user.branchId;
+  if (!mayCritical && !mayNotifiable && !mayReady && !mayApprovals) {
+    return { critical: 0, notifiable: 0, ready: 0, approvals: 0 };
+  }
 
   const db = await tenantDb();
-  const [critical, notifiable, ready] = await Promise.all([
+  const [critical, notifiable, ready, approvals] = await Promise.all([
     mayCritical ? db.criticalNotification.count({ where: { notifiedAt: null } }) : 0,
     mayNotifiable ? db.notifiableReport.count({ where: { reportedAt: null } }) : 0,
     mayReady
@@ -45,6 +51,9 @@ export async function getNavCountsAction(): Promise<NavCounts> {
           },
         })
       : 0,
+    mayApprovals
+      ? db.orderLine.count({ where: { status: 'RESULT_SAVED', visit: { branchId: user.branchId! } } })
+      : 0,
   ]);
-  return { critical, notifiable, ready };
+  return { critical, notifiable, ready, approvals };
 }

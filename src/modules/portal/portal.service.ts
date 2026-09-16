@@ -65,20 +65,30 @@ export const portalService = {
   async requestOtp(
     labCode: string,
     mobile: string,
-  ): Promise<{ ok: boolean; devCode?: string; error?: string }> {
+  ): Promise<{ ok: boolean; devCode?: string; devNote?: string; error?: string }> {
     if (!MOBILE_RE.test(mobile)) {
       return { ok: false, error: 'Enter a valid 11-digit mobile (e.g. 03001234567)' };
     }
 
     const tenant = await resolveTenant(labCode);
-    if (!tenant || !tenant.isActive) return { ok: true }; // do not confirm lab codes either
+    // Silence is deliberate: confirming a lab code or a number would turn this
+    // screen into a directory. It also makes the portal impossible to test —
+    // no code, no reason, nothing to go on — so on a development machine, and
+    // only where the dev code is already exposed, the reason is said out loud.
+    if (!tenant || !tenant.isActive) {
+      return exposeDevOtp() ? { ok: true, devNote: `No active lab has the code "${labCode}".` } : { ok: true };
+    }
     if (!parseFeatures(tenant.features)['patients.portal']) return { ok: false, error: 'Online reports are not available for this lab.' };
 
     const patient = await prisma.patient.findFirst({
       where: { tenantId: tenant.id, mobile },
       select: { id: true },
     });
-    if (!patient) return { ok: true };
+    if (!patient) {
+      return exposeDevOtp()
+        ? { ok: true, devNote: `No patient of "${tenant.name ?? labCode}" has the mobile ${mobile}.` }
+        : { ok: true };
+    }
 
     const now = new Date();
     const existing = await prisma.portalOtp.findUnique({

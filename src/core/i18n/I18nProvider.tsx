@@ -2,13 +2,31 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import en from './messages/en.json';
-import ur from './messages/ur.json';
 import { MESSAGE_PATTERNS } from './patterns';
 
 export type Locale = 'en' | 'ur';
 type Messages = Record<string, string>;
 
-const DICTS: Record<Locale, Messages> = { en, ur };
+const EN = en as Messages;
+
+/**
+ * The words on screen.
+ *
+ * Urdu is around 127 KB of JSON, and importing it here put it in the first load
+ * of every page for every reader, English ones included. It is fetched the
+ * first time someone actually reads in Urdu; until it arrives English shows,
+ * which is the same fallback a missing key always had.
+ */
+function useDictionary(locale: Locale): Messages {
+  const [urdu, setUrdu] = useState<Messages | null>(null);
+  useEffect(() => {
+    if (locale !== 'ur' || urdu) return;
+    let alive = true;
+    void import('./messages/ur.json').then((m) => { if (alive) setUrdu(m.default as Messages); });
+    return () => { alive = false; };
+  }, [locale, urdu]);
+  return locale === 'ur' && urdu ? urdu : EN;
+}
 
 /** English sentence → key, so a message that arrives as text can still be translated. */
 const EN_INDEX = new Map(Object.entries(en as Messages).map(([k, v]) => [v, k]));
@@ -41,6 +59,7 @@ export function I18nProvider({
   children: React.ReactNode;
 }) {
   const [locale, setLocaleState] = useState<Locale>(initialLocale);
+  const dict = useDictionary(locale);
   const dir = locale === 'ur' ? 'rtl' : 'ltr';
 
   useEffect(() => {
@@ -59,26 +78,26 @@ export function I18nProvider({
   );
 
   const t = useCallback(
-    (key: string) => DICTS[locale][key] ?? DICTS.en[key] ?? key,
-    [locale],
+    (key: string) => dict[key] ?? EN[key] ?? key,
+    [dict],
   );
 
   const tr = useCallback(
     (message: string) => {
       if (!message || locale === 'en') return message;
       const key = EN_INDEX.get(message);
-      if (key) return DICTS[locale][key] ?? message;
+      if (key) return dict[key] ?? message;
       for (const p of MESSAGE_PATTERNS) {
         const m = message.match(p.re);
         if (!m) continue;
-        let out = DICTS[locale][p.key];
+        let out = dict[p.key];
         if (!out) return message;
         p.vars.forEach((v, i) => { out = out.replace(`{${v}}`, m[i + 1]); });
         return out;
       }
       return message;
     },
-    [locale],
+    [dict, locale],
   );
 
   return (

@@ -1,4 +1,4 @@
-import { auth } from '@/core/auth/auth';
+import { sessionOnce } from '@/core/auth/session';
 import type { PermissionCode } from './permissions';
 import { permissionAllowed } from '@/core/billing/access';
 import { labAccessFor, LabRestrictedError } from '@/core/billing/access.server';
@@ -20,7 +20,7 @@ export class UnauthenticatedError extends Error {
 
 /** Returns the current session's user permissions, or throws if unauthenticated. */
 export async function currentUser() {
-  const session = await auth();
+  const session = await sessionOnce();
   if (!session?.user) throw new UnauthenticatedError();
   return session.user;
 }

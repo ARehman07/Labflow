@@ -1,12 +1,13 @@
 'use client';
 
-import { useFeatures } from '@/core/features/FeaturesProvider';import { useEffect, useState } from 'react';
+import { useFeatures } from '@/core/features/FeaturesProvider';import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ChevronRight, LogOut, Menu, X } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { cn } from '@/lib/utils';
 import { getNavCountsAction, type NavCounts } from '@/modules/nav/nav.actions';
+import { usePoll } from '@/lib/use-poll';
 import { logoutAction } from '@/app/(staff)/actions';
 import { ThemeToggle } from './ThemeToggle';
 import { LanguageToggle } from './LanguageToggle';
@@ -31,18 +32,15 @@ export function MobileNav({
   const { t } = useI18n();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const [counts, setCounts] = useState<NavCounts>({ critical: 0, notifiable: 0, ready: 0 });
+  const [counts, setCounts] = useState<NavCounts>({ critical: 0, notifiable: 0, ready: 0, approvals: 0 });
 
   const features = useFeatures();
   const tabs = phoneTabs(permissions, features);
   const groups = visibleGroups(permissions, features);
 
-  useEffect(() => {
-    const load = () => getNavCountsAction().then(setCounts).catch(() => {});
-    load();
-    const id = setInterval(load, 60_000);
-    return () => clearInterval(id);
-  }, [pathname]);
+  // Not keyed on the route: navigating already re-renders the page, and asking
+  // again on every click put two extra server calls in front of it.
+  usePoll(useCallback(() => { getNavCountsAction().then(setCounts).catch(() => {}); }, []), 60_000);
 
   // Arriving at a page closes the sheet that took you there.
   useEffect(() => { setOpen(false); }, [pathname]);

@@ -4,7 +4,8 @@
  *
  * Three things reach a search box at the counter or the bench:
  *   - a tube label barcode, `00001-BLD-9W58` (a retake adds `-R1`);
- *   - the slip's QR, `LabFlow|Slip:00014|MR:MR-000002`;
+ *   - the slip's QR, now a portal link, `https://lab.example/portal?lab=ARFA&slip=00014`
+ *     (slips printed before that carry `LabFlow|Slip:00014|MR:MR-000002`);
  *   - a slip number read aloud, `14` or `00014`.
  * Each carries the slip number, so all three land on the same visit. Anything
  * else is left to the ordinary name / MR# / mobile search.
@@ -15,6 +16,8 @@ export type ScanMatch =
 
 const BARCODE = /^(\d{5})-[A-Z]{3}-[A-Z0-9]{4}(?:-R\d+)?$/u;
 const SLIP_QR = /(?:^|\|)Slip:(\d{1,6})(?:\||$)/u;
+/** The same number in the printed link: …/portal?lab=ARFA&slip=00014 */
+const SLIP_LINK = /[?&]slip=(\d{1,6})(?:&|$)/u;
 const SLIP_NO = /^#?(\d{1,6})$/u;
 
 const pad = (n: string) => n.padStart(5, '0');
@@ -25,7 +28,7 @@ export function parseScan(raw: string): ScanMatch | null {
   const upper = q.toUpperCase();
   const bc = BARCODE.exec(upper);
   if (bc) return { kind: 'barcode', barcode: upper, slipNo: bc[1] };
-  const qr = SLIP_QR.exec(q);
+  const qr = SLIP_QR.exec(q) ?? SLIP_LINK.exec(q);
   if (qr) return { kind: 'slip', slipNo: pad(qr[1]) };
   const no = SLIP_NO.exec(q);
   // Eleven digits is a mobile number, not a slip; the pattern already stops at

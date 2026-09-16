@@ -9,6 +9,11 @@ describe('parseScan', () => {
 
   it('reads the slip QR payload', () => {
     expect(parseScan('LabFlow|Slip:00014|MR:MR-000002')).toEqual({ kind: 'slip', slipNo: '00014' });
+    // The QR printed on a slip today is the portal link; it still scans as its visit.
+    expect(parseScan('https://lab.example/portal?lab=ARFA&slip=00014'))
+      .toEqual({ kind: 'slip', slipNo: '00014' });
+    expect(parseScan('http://localhost:3007/portal?lab=ARFA&slip=7'))
+      .toEqual({ kind: 'slip', slipNo: '00007' });
   });
 
   it('pads a slip number typed short', () => {

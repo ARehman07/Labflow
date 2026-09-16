@@ -102,10 +102,34 @@ describe('portal OTP', () => {
   });
 
   it('gives nothing away about unknown numbers or lab codes', async () => {
-    const unknownNumber = await portalService.requestOtp('portal-a', '03001111111');
-    const unknownLab = await portalService.requestOtp('no-such-lab', MOBILE);
-    expect(unknownNumber).toEqual({ ok: true });
-    expect(unknownLab).toEqual({ ok: true });
+    // The flag is pinned off: this is the guarantee a live server makes, and it
+    // must not depend on what the developer happens to have in their .env.
+    const original = process.env.PORTAL_DEV_OTP;
+    process.env.PORTAL_DEV_OTP = 'false';
+    try {
+      const unknownNumber = await portalService.requestOtp('portal-a', '03001111111');
+      const unknownLab = await portalService.requestOtp('no-such-lab', MOBILE);
+      expect(unknownNumber).toEqual({ ok: true });
+      expect(unknownLab).toEqual({ ok: true });
+    } finally {
+      process.env.PORTAL_DEV_OTP = original;
+    }
+  });
+
+  it('says why no code was issued, but only on a development machine', async () => {
+    const original = process.env.PORTAL_DEV_OTP;
+    process.env.PORTAL_DEV_OTP = 'true';
+    try {
+      const unknownNumber = await portalService.requestOtp('portal-a', '03001111111');
+      const unknownLab = await portalService.requestOtp('no-such-lab', MOBILE);
+      expect(unknownNumber.devNote).toContain('03001111111');
+      expect(unknownLab.devNote).toContain('no-such-lab');
+      // A reason is not a code: neither response carries one.
+      expect(unknownNumber.devCode).toBeUndefined();
+      expect(unknownLab.devCode).toBeUndefined();
+    } finally {
+      process.env.PORTAL_DEV_OTP = original;
+    }
   });
 
   it('rejects a malformed mobile', async () => {

@@ -553,6 +553,7 @@ model Visit {
   @@unique([branchId, slipNo])
   @@index([bookedAt])
   @@index([tenantId])
+  @@index([tenantId, branchId, bookedAt])
 }
 
 model Sample {
@@ -571,6 +572,7 @@ model Sample {
 
   @@unique([tenantId, barcode])
   @@index([tenantId])
+  @@index([tenantId, visitId, specimenType])
 }
 
 model OrderLine {
@@ -615,6 +617,8 @@ model OrderLine {
 
   @@index([status])
   @@index([tenantId])
+  @@index([tenantId, visitId, status])
+  @@index([tenantId, status, dueAt])
 }
 
 model ResultValue {
@@ -659,6 +663,7 @@ model WorkflowEvent {
   at          DateTime         @default(now())
 
   @@index([orderLineId])
+  @@index([tenantId, toState, at])
   @@index([tenantId])
 }
 
@@ -829,6 +834,7 @@ model Invoice {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId])
+  @@index([tenantId, status])
   @@index([careOfUserId])
 }
 
@@ -849,6 +855,8 @@ model Payment {
   at           DateTime        @default(now())
 
   @@index([tenantId])
+  @@index([tenantId, invoiceId])
+  @@index([tenantId, at])
 }
 
 model Refund {
