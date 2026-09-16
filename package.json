@@ -2,7 +2,7 @@
   "name": "labflow",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted Lab Information System (LIS) — Phase 0 foundation",
+  "description": "Self-hosted Lab Information System (LIS) \u2014 Phase 0 foundation",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "typecheck:pg": "node scripts/typecheck-postgres.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:generate": "prisma generate",

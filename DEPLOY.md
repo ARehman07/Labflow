@@ -33,6 +33,16 @@ npm run db:demo                # OPTIONAL — small demo dataset; skip for a rea
 changes go through `npx prisma migrate dev --name <change>` so Postgres and the
 SQLite dev database stay in step.
 
+**Before pushing, type-check against Postgres:**
+```bash
+npm run typecheck:pg    # generates the Postgres client, runs tsc, restores SQLite
+```
+The SQLite client has no enums — every status is a plain string — so a `where`
+clause that Postgres rejects still compiles locally. Prisma answers a rejected
+`where` by falling back to the default payload, which silently drops `select`,
+and the build then fails in whatever maps the rows. `npm run typecheck` alone
+will not catch it.
+
 **Local development uses SQLite** via `prisma/schema.sqlite.prisma`, which is
 generated — never edit it. After changing `schema.prisma`:
 ```bash

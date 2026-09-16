@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { tenantDb } from '@/core/db/context';
 import { BOARD_STAGES, type BoardCounts } from './board-stages';
 import { parseScan } from '@/lib/scan';
@@ -19,13 +20,22 @@ export interface BoardFilterInput {
  * counts, so the numbers on the chips describe the same work the cards come
  * from — counted over all of it, not over the page that fitted.
  */
+/**
+ * Annotated, and it has to be. Without a declared return type the object is
+ * inferred structurally — `status: { not: string }` rather than the VisitStatus
+ * enum — which Postgres's generated client rejects. Prisma then falls back to
+ * the default payload for the whole query, `select` is ignored, and the errors
+ * surface far away in whatever maps the result. The SQLite client used for
+ * local development has no enums (they are plain strings there), so nothing
+ * catches this until a Postgres build.
+ */
 function boardWhere(
   branchId: string,
   from: Date,
   to: Date,
   query?: string,
   filters: BoardFilterInput = {},
-) {
+): Prisma.VisitWhereInput {
   const q = query?.trim();
   // A scanned tube label or slip QR finds its visit too, not only typed text.
   // A whole code (barcode, QR, or a five-digit slip number as printed) means
@@ -42,6 +52,8 @@ function boardWhere(
       // Filters narrow which patients show; each card still carries all its tests.
       AND: [
         ...(filters.departmentId ? [{ orderLines: { some: { test: { departmentId: filters.departmentId } } } }] : []),
+        // `as never` and not a named enum filter: that type exists in the
+        // Postgres client and not in the SQLite one, where statuses are strings.
         ...(filters.testStatus ? [{ orderLines: { some: { status: filters.testStatus as never } } }] : []),
         ...(filters.partnerLabId === 'ANY' ? [{ partnerLabId: { not: null } }]
           : filters.partnerLabId === 'NONE' ? [{ partnerLabId: null }]
