@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, useTransition } from 'react';
-import { Plus, ArrowDownLeft, ArrowUpRight, Info, Wallet, Landmark, CreditCard, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, ArrowDownLeft, ArrowUpRight, Info, Wallet, Landmark, CreditCard, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -19,6 +19,7 @@ import {
   type LedgerRow,
 } from '@/modules/finance/finance.actions';
 import { Tr } from '@/components/ui/Tr';
+import { DatePicker } from '@/components/ui/DatePicker';
 
 /**
  * The day's money, told as one arithmetic story rather than four tiles that
@@ -381,10 +382,6 @@ function shiftDay(iso: string, by: number): string {
 function DayPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { t } = useI18n();
   const today = isoDay(new Date());
-  const [y, m, d] = value.split('-').map(Number);
-  const label = new Intl.DateTimeFormat('en-GB', {
-    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
-  }).format(new Date(y, m - 1, d));
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -392,19 +389,15 @@ function DayPicker({ value, onChange }: { value: string; onChange: (v: string) =
         aria-label={t('finance.prevDay')} title={t('finance.prevDay')}>
         <ChevronLeft className="h-4 w-4 rtl:rotate-180" />
       </Button>
-      <label className="field relative flex w-auto cursor-pointer items-center gap-2 py-2 font-semibold tabular-nums">
-        <CalendarDays className="h-4 w-4 text-subtle" aria-hidden />
-        {label}
-        <input
-          type="date"
-          value={value}
-          max={today}
-          onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
-          onClick={(e) => { try { (e.currentTarget as HTMLInputElement).showPicker(); } catch { /* older browsers */ } }}
-          aria-label={t('finance.date')}
-          className="absolute inset-0 cursor-pointer opacity-0"
-        />
-      </label>
+      <DatePicker
+        value={value}
+        max={today}
+        clearable={false}
+        onChange={(v) => { if (v) onChange(v); }}
+        aria-label={t('finance.date')}
+        format={{ weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }}
+        triggerClassName="field flex w-auto items-center gap-2 py-2 font-semibold tabular-nums"
+      />
       <Button variant="outline" size="icon" onClick={() => onChange(shiftDay(value, 1))} disabled={value >= today}
         aria-label={t('finance.nextDay')} title={t('finance.nextDay')}>
         <ChevronRight className="h-4 w-4 rtl:rotate-180" />

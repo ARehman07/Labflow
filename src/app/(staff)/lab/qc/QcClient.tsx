@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { useToast } from '@/components/ui/Toast';
 import { Tr } from '@/components/ui/Tr';
+import { DatePicker } from '@/components/ui/DatePicker';
 import { cn } from '@/lib/utils';
 import {
   createQcMaterialAction,
@@ -127,7 +128,7 @@ export function QcClient({
             </div>
             <div>
               <label className="label" htmlFor="qc-exp">{t('qc.expires')}</label>
-              <input id="qc-exp" type="date" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} className="field" />
+              <DatePicker id="qc-exp" value={form.expiresAt} onChange={(v) => setForm({ ...form, expiresAt: v })} />
             </div>
           </div>
           {error && <p className="note-danger"><Tr text={error} /></p>}

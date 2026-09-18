@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils';
 export interface SelectOption {
   value: string;
   label: string;
+  /** A second, smaller line under the label in the menu (the trigger shows the label only). */
+  hint?: string;
 }
 
 interface SelectProps {
@@ -16,6 +18,8 @@ interface SelectProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** A menu wider than the trigger, for options that need the room. Kept on screen. */
+  menuWidth?: number;
 }
 
 /**
@@ -23,7 +27,7 @@ interface SelectProps {
  * to the trigger's rect — so it escapes any `overflow-hidden` ancestor (tables,
  * cards) and never clips. Closes on outside-click / Escape / scroll.
  */
-export function Select({ value, options, onChange, placeholder, disabled, className }: SelectProps) {
+export function Select({ value, options, onChange, placeholder, disabled, className, menuWidth }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [rect, setRect] = useState<{ top: number; left: number; width: number; below: boolean } | null>(null);
@@ -39,8 +43,11 @@ export function Select({ value, options, onChange, placeholder, disabled, classN
     const r = el.getBoundingClientRect();
     const spaceBelow = window.innerHeight - r.bottom;
     const below = spaceBelow > 260 || spaceBelow > r.top;
-    setRect({ top: below ? r.bottom + 6 : r.top - 6, left: r.left, width: r.width, below });
-  }, []);
+    const width = Math.min(Math.max(r.width, menuWidth ?? 0), window.innerWidth - 16);
+    // A wider menu lines up with the trigger's end when it would run off screen.
+    const left = r.left + width > window.innerWidth - 8 ? Math.max(8, r.right - width) : r.left;
+    setRect({ top: below ? r.bottom + 6 : r.top - 6, left, width, below });
+  }, [menuWidth]);
 
   useLayoutEffect(() => {
     if (open) place();
@@ -123,14 +130,19 @@ export function Select({ value, options, onChange, placeholder, disabled, classN
                 onMouseEnter={() => setActive(i)}
                 onMouseDown={(e) => { e.preventDefault(); onChange(o.value); setOpen(false); }}
                 className={cn(
-                  'flex w-full items-center justify-between rounded-lg px-3 py-2 text-start text-sm transition-colors',
+                  'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-start text-sm transition-colors',
                   i === active
                     ? 'bg-brand-500/12 text-brand-700 dark:text-brand-300'
                     : 'text-body hover:bg-surface-2',
                 )}
               >
-                {o.label}
-                {o.value === value && <Check className="h-4 w-4 text-brand-600 dark:text-brand-300" />}
+                {o.hint ? (
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{o.label}</span>
+                    <span className="block truncate text-xs text-muted" title={o.hint}>{o.hint}</span>
+                  </span>
+                ) : o.label}
+                {o.value === value && <Check className="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300" />}
               </button>
             </li>
           ))}

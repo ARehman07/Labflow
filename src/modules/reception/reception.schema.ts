@@ -102,6 +102,12 @@ export const bookVisitSchema = z.object({
    *            already paid for.
    */
   familyCardMode: z.enum(['NONE', 'CREATE', 'JOIN']).default('NONE'),
+  /**
+   * Leave the patient's own family card off this visit. The counter does this
+   * to give a manual discount instead (the reason goes in `notes`) — a card
+   * and a manual discount still never stack. Ignored when they hold no card.
+   */
+  waiveFamilyCard: z.boolean().default(false),
   /// For CREATE, the number to hold the card against (defaults to the
   /// patient's own). For JOIN, the number the existing card is held on.
   /// For JOIN, how this patient relates to the card holder.

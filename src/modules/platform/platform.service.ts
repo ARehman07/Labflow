@@ -4,7 +4,7 @@ import { unscopedPrisma as prisma } from '@/core/db/tenant';
 import { deleteTenant } from '@/core/db/tenant-lifecycle';
 import { ALL_PERMISSIONS, DEFAULT_ROLES } from '@/core/rbac/permissions';
 import { FEATURE_KEYS, parseLocked, type FeatureKey } from '@/core/features/catalog';
-import { labAccess, paymentPeriod } from '@/core/billing/access';
+import { labAccess, monthsCovered } from '@/core/billing/access';
 import { forgetLabAccess } from '@/core/billing/access.server';
 import { RESERVED_CODES, tempPassword } from './rules';
 
@@ -38,6 +38,9 @@ async function labCode(id: string) {
  * The platform team's view across labs. Everything here reads and writes
  * across tenants on purpose, so it is reachable only from the platform console.
  */
+/** A day as `YYYY-MM-DD` in the server's own time, as it was entered. */
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
 export const platformService = {
   async listLabs() {
     const tenants = await prisma.tenant.findMany({
@@ -162,23 +165,31 @@ export const platformService = {
     await record(admin, 'PLAN', lab, { ...plan, paidUntil: plan.paidUntil?.toISOString().slice(0, 10) ?? null });
   },
 
-  /** Record a subscription payment; the lab's paid-until moves on by the months it covers. */
-  async recordPayment(id: string, p: { amount: number; months: number; method?: string; reference?: string; note?: string }, admin: string) {
+  /**
+   * Record a subscription payment for the days the admin picked. The lab's
+   * paid-until moves to the end of that period — never back: a payment for a
+   * period already covered (say, logging September after setting paid-until
+   * to 30 Sept by hand) is recorded without shortening what is paid.
+   */
+  async recordPayment(id: string, p: { amount: number; from: Date; until: Date; method?: string; reference?: string; note?: string }, admin: string) {
     const lab = await prisma.tenant.findUnique({ where: { id }, select: { id: true, code: true, paidUntil: true } });
     if (!lab) throw new PlatformError('That lab no longer exists.');
-    const period = paymentPeriod(lab.paidUntil, p.months);
+    const months = monthsCovered(p.from, p.until);
+    const paidUntil = lab.paidUntil && lab.paidUntil > p.until ? lab.paidUntil : p.until;
     await prisma.$transaction([
       prisma.labPayment.create({
         data: {
-          tenantId: id, amount: p.amount, months: p.months, periodFrom: period.from, periodTo: period.to,
+          tenantId: id, amount: p.amount, months, periodFrom: p.from, periodTo: p.until,
           method: p.method ?? null, reference: p.reference ?? null, note: p.note ?? null, recordedBy: admin,
         },
       }),
-      prisma.tenant.update({ where: { id }, data: { paidUntil: period.to } }),
+      prisma.tenant.update({ where: { id }, data: { paidUntil } }),
     ]);
     forgetLabAccess(id);
-    await record(admin, 'PAYMENT', lab, { amount: p.amount, months: p.months, paidUntil: period.to.toISOString().slice(0, 10) });
-    return period;
+    await record(admin, 'PAYMENT', lab, {
+      amount: p.amount, months, from: ymd(p.from), until: ymd(p.until), paidUntil: ymd(paidUntil),
+    });
+    return { from: p.from, to: paidUntil };
   },
 
   /** Restrict a lab now, keep it open regardless of payment, or go back to following payment. */

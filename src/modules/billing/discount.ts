@@ -7,6 +7,8 @@
  *   2. Where more than one AUTOMATIC discount is eligible (card, doctor),
  *      compute each as an amount and take the LARGEST. They never stack.
  *   3. A card holder gets no discretionary discount on top. The card is final.
+ *      The counter may leave the card off a visit instead (reception's
+ *      waiveFamilyCard), and give a manual discount in its place — never both.
  *   4. A DISCRETIONARY (manual) discount applies only when no automatic one
  *      does, and never exceeds the bill.
  *

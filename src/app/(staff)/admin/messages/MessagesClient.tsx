@@ -12,6 +12,7 @@ import { SaveBar } from '@/components/ui/SaveBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/components/ui/Toast';
 import { Tr } from '@/components/ui/Tr';
+import { DatePicker } from '@/components/ui/DatePicker';
 import { cn } from '@/lib/utils';
 import { DEFAULT_TEMPLATES, EVENT_VARS, renderTemplate, smsParts } from '@/modules/messages/templates';
 import {
@@ -174,11 +175,11 @@ export function MessagesClient({
           <Card className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="label" htmlFor="ml-from">{t('msg.logFrom')}</label>
-              <input id="ml-from" type="date" value={filters.from} onChange={(e) => filter({ from: e.target.value })} className="field" />
+              <DatePicker id="ml-from" value={filters.from} max={filters.to || undefined} onChange={(v) => filter({ from: v })} />
             </div>
             <div>
               <label className="label" htmlFor="ml-to">{t('msg.logTo')}</label>
-              <input id="ml-to" type="date" value={filters.to} onChange={(e) => filter({ to: e.target.value })} className="field" />
+              <DatePicker id="ml-to" value={filters.to} min={filters.from || undefined} onChange={(v) => filter({ to: v })} />
             </div>
             <div>
               <span className="label">{t('msg.logChannel')}</span>

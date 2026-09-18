@@ -11,6 +11,7 @@ import { Segmented } from '@/components/ui/Segmented';
 import { Select } from '@/components/ui/Select';
 import { useToast } from '@/components/ui/Toast';
 import { Tr } from '@/components/ui/Tr';
+import { DatePicker } from '@/components/ui/DatePicker';
 import { cn } from '@/lib/utils';
 import { downloadCsv } from '@/lib/csv';
 import {
@@ -128,7 +129,7 @@ function Items({ items, reload }: { items: StockItemDTO[]; reload: () => Promise
             </div>
             <div>
               <label className="label" htmlFor="st-exp">{t('qc.expires')}</label>
-              <input id="st-exp" type="date" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} className="field" />
+              <DatePicker id="st-exp" value={form.expiresAt} onChange={(v) => setForm({ ...form, expiresAt: v })} />
             </div>
           </div>
           {error && !moving && <p className="note-danger"><Tr text={error} /></p>}
@@ -209,8 +210,8 @@ function Register({ items }: { items: StockItemDTO[] }) {
   return (
     <div className="space-y-4">
       <Card className="flex flex-wrap items-end gap-3 p-4">
-        <div><label className="label" htmlFor="sr-from">{t('lab.filterFrom')}</label><input id="sr-from" type="date" value={from} onChange={(e) => e.target.value && setFrom(e.target.value)} className="field" /></div>
-        <div><label className="label" htmlFor="sr-to">{t('lab.filterTo')}</label><input id="sr-to" type="date" value={to} onChange={(e) => e.target.value && setTo(e.target.value)} className="field" /></div>
+        <div><label className="label" htmlFor="sr-from">{t('lab.filterFrom')}</label><DatePicker id="sr-from" value={from} max={to} clearable={false} onChange={(v) => v && setFrom(v)} /></div>
+        <div><label className="label" htmlFor="sr-to">{t('lab.filterTo')}</label><DatePicker id="sr-to" value={to} min={from} clearable={false} onChange={(v) => v && setTo(v)} /></div>
         <div className="min-w-48 flex-1">
           <span className="label">{t('stock.item')}</span>
           <Select value={itemId} onChange={setItemId} options={[{ value: '', label: t('stock.allItems') }, ...items.map((i) => ({ value: i.id, label: i.name }))]} />

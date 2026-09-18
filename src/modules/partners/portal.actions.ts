@@ -111,7 +111,7 @@ export async function partnerBookAction(input: unknown): Promise<{ ok: true; sli
     const { visitId } = await receptionService.bookVisit(
       {
         patientId: patient.id, testIds: d.testIds, packageIds: [], partnerLabId: user.partnerLabId, b2bNo: d.b2bNo, notes: d.notes,
-        familyCardMode: 'NONE', familyCardRelation: 'OTHER', testRemarks: {}, sampleSource: 'OUTSIDE_LAB',
+        familyCardMode: 'NONE', waiveFamilyCard: false, familyCardRelation: 'OTHER', testRemarks: {}, sampleSource: 'OUTSIDE_LAB',
       } as Parameters<typeof receptionService.bookVisit>[0],
       { userId: user.id, branchId: user.branchId },
     );

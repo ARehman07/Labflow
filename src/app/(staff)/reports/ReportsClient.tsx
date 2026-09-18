@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { ListSkeleton } from '@/components/ui/Skeleton';
 import { Tr } from '@/components/ui/Tr';
+import { DatePicker } from '@/components/ui/DatePicker';
 import { cn, formatPkr } from '@/lib/utils';
 import { downloadCsv } from '@/lib/csv';
 import {
@@ -133,11 +134,11 @@ export function ReportsClient({ options, money, results }: { options: Options; m
         <Card className="flex flex-wrap items-end gap-3 p-4">
           <div>
             <label className="label" htmlFor="rep-from">{t('lab.filterFrom')}</label>
-            <input id="rep-from" type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} className="field" />
+            <DatePicker id="rep-from" value={from} max={to} clearable={false} onChange={(v) => v && setFrom(v)} />
           </div>
           <div>
             <label className="label" htmlFor="rep-to">{t('lab.filterTo')}</label>
-            <input id="rep-to" type="date" value={to} min={from} onChange={(e) => e.target.value && setTo(e.target.value)} className="field" />
+            <DatePicker id="rep-to" value={to} min={from} clearable={false} onChange={(v) => v && setTo(v)} />
           </div>
           <div className="flex flex-wrap gap-1.5 pb-0.5">
             {[{ k: 'rep.today', a: 0, b: 0 }, { k: 'rep.yesterday', a: 1, b: 1 }, { k: 'rep.last7', a: 6, b: 0 }, { k: 'rep.last30', a: 29, b: 0 }].map((p) => (

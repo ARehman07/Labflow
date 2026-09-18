@@ -264,19 +264,21 @@ export const familyCardService = {
   },
 
   /** The lab's card policy, as reception needs it to price a slip. */
-  async policy(): Promise<{ fee: number; discountPct: number; discountOnIssue: boolean }> {
+  async policy(): Promise<{ fee: number; discountPct: number; discountOnIssue: boolean; memberCap: number }> {
     const t = await (await tenantDb()).tenant.findUniqueOrThrow({
       where: { id: await currentTenantId() },
       select: {
         familyCardFee: true,
         familyCardDiscountPct: true,
         familyCardDiscountOnIssue: true,
+        familyCardMemberCap: true,
       },
     });
     return {
       fee: Number(t.familyCardFee),
       discountPct: Number(t.familyCardDiscountPct),
       discountOnIssue: t.familyCardDiscountOnIssue,
+      memberCap: t.familyCardMemberCap,
     };
   },
 

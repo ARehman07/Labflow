@@ -89,13 +89,20 @@ export async function updatePlanAction(id: string, input: unknown): Promise<Res>
   }
 }
 
+const requiredDate = z.string().trim().refine((s) => !Number.isNaN(Date.parse(`${s}T00:00:00`)), 'Enter a valid date')
+  .transform((s) => new Date(`${s}T00:00:00`));
+
+/** A payment covers the days the admin picks: from and until, both inclusive. */
 const paymentSchema = z.object({
   amount: z.coerce.number().positive('Enter the amount paid').max(100_000_000),
-  months: z.coerce.number().int().min(1, 'At least 1 month').max(24, 'At most 24 months'),
+  from: requiredDate,
+  until: requiredDate,
   method: z.string().trim().max(40).optional().transform((v) => v || undefined),
   reference: z.string().trim().max(80).optional().transform((v) => v || undefined),
   note: z.string().trim().max(200).optional().transform((v) => v || undefined),
-});
+})
+  .refine((p) => p.until >= p.from, { message: 'The period cannot end before it starts', path: ['until'] })
+  .refine((p) => p.until.getTime() - p.from.getTime() <= 3 * 366 * 86_400_000, { message: 'A payment covers at most 3 years', path: ['until'] });
 
 export async function recordLabPaymentAction(id: string, input: unknown): Promise<{ ok: true; paidUntil: string } | { ok: false; error: string }> {
   const admin = await requirePlatformAdmin();

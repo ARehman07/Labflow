@@ -159,22 +159,27 @@ export const receptionService = {
     // manual entry is discarded rather than added. See modules/billing/discount.
     const cardsOn = features['booking.familyCards'];
     const cardMode = cardsOn ? input.familyCardMode : 'NONE';
-    const existingCard = cardsOn ? await familyCardService.findForPatient(input.patientId) : null;
+    const heldCard = cardsOn ? await familyCardService.findForPatient(input.patientId) : null;
+    // Left off this visit at the counter: the booking is billed as if they held
+    // no card (no card rate, not counted as card use), and a manual discount
+    // may apply instead. The card itself is untouched.
+    const cardWaived = Boolean(heldCard && input.waiveFamilyCard);
+    const existingCard = cardWaived ? null : heldCard;
     const tenant = await labPolicy();
 
     // A card may already cover this patient, be joined from a relative's
     // number, or be created here. Only creating one charges the joining fee —
     // joining a family member's card costs nothing, it is already paid for.
     const joiningCard =
-      !existingCard && cardMode === 'JOIN' && input.familyCardMobile
+      !heldCard && cardMode === 'JOIN' && input.familyCardMobile
         ? await familyCardService.findJoinable(input.familyCardMobile, input.patientId)
         : null;
 
-    if (!existingCard && cardMode === 'JOIN' && !joiningCard) {
+    if (!heldCard && cardMode === 'JOIN' && !joiningCard) {
       throw new Error('That family card cannot be used — check the number, or it may be full.');
     }
 
-    const issuingCard = cardMode === 'CREATE' && !existingCard && !joiningCard;
+    const issuingCard = cardMode === 'CREATE' && !heldCard && !joiningCard;
     const cardFee = issuingCard ? Number(tenant.familyCardFee) : 0;
 
     const effectivePct = existingCard

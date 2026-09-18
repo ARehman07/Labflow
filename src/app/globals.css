@@ -293,6 +293,12 @@ body {
   .page-shell {
     @apply mx-auto w-full max-w-5xl;
   }
+  /* A page that is a workspace rather than a document — the booking counter —
+     takes the width the screen offers instead of a reading column. Capped, so a
+     very wide monitor does not stretch it into a strip. */
+  .page-shell:has(.page-wide) {
+    max-width: 76rem;
+  }
   .page {
     @apply space-y-5;
   }

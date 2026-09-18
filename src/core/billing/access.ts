@@ -73,3 +73,15 @@ export function paymentPeriod(paidUntil: Date | null, months: number, now = new 
   to.setDate(to.getDate() - 1);
   return { from, to };
 }
+
+/**
+ * Whole months a period covers, counting a part month as one: 1 Sept – 30 Sept
+ * is 1, 15 Sept – 14 Oct is 1, 1 Sept – 31 Oct is 2. Recorded with a payment
+ * the platform admin dated by hand, for the lab's payment history.
+ */
+export function monthsCovered(from: Date, to: Date): number {
+  const end = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1);
+  let months = (end.getFullYear() - from.getFullYear()) * 12 + (end.getMonth() - from.getMonth());
+  if (end.getDate() > from.getDate()) months += 1;
+  return Math.max(1, months);
+}

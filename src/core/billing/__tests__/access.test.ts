@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { effectivePermissions, labAccess, paymentPeriod, permissionAllowed } from '../access';
+import { effectivePermissions, labAccess, monthsCovered, paymentPeriod, permissionAllowed } from '../access';
 
 const now = new Date('2026-09-15T10:00:00');
 const day = (s: string) => new Date(`${s}T00:00:00`);
@@ -51,5 +51,21 @@ describe('paymentPeriod', () => {
   it('starts from today for a lab already overdue', () => {
     const p = paymentPeriod(day('2026-08-01'), 3, now);
     expect([p.from.getMonth(), p.from.getDate(), p.to.getMonth(), p.to.getDate()]).toEqual([8, 15, 11, 14]);
+  });
+});
+
+describe('monthsCovered', () => {
+  const d = (s: string) => new Date(`${s}T00:00:00`);
+  it('counts a calendar month as one', () => {
+    expect(monthsCovered(d('2026-09-01'), d('2026-09-30'))).toBe(1);
+    expect(monthsCovered(d('2026-10-01'), d('2026-10-31'))).toBe(1);
+  });
+  it('counts a month that runs across two', () => {
+    expect(monthsCovered(d('2026-09-15'), d('2026-10-14'))).toBe(1);
+  });
+  it('counts several, and a part month as a whole one', () => {
+    expect(monthsCovered(d('2026-09-01'), d('2026-11-30'))).toBe(3);
+    expect(monthsCovered(d('2026-09-01'), d('2026-10-10'))).toBe(2);
+    expect(monthsCovered(d('2026-09-01'), d('2026-09-10'))).toBe(1);
   });
 });

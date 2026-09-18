@@ -33,6 +33,7 @@ import {
 import type { BoardCounts } from '@/modules/lab/board-stages';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { LoadError } from '@/components/ui/LoadError';
+import { DatePicker } from '@/components/ui/DatePicker';
 
 /**
  * One card per patient, all of their tests inside it.
@@ -398,11 +399,11 @@ export function WorkboardClient() {
         <div className="card grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <label className="label" htmlFor="bf-from">{t('lab.filterFrom')}</label>
-            <input id="bf-from" type="date" value={filters.from ?? ''} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value || undefined }))} className="field" />
+            <DatePicker id="bf-from" value={filters.from ?? ''} max={filters.to} onChange={(v) => setFilters((f) => ({ ...f, from: v || undefined }))} />
           </div>
           <div>
             <label className="label" htmlFor="bf-to">{t('lab.filterTo')}</label>
-            <input id="bf-to" type="date" value={filters.to ?? ''} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value || undefined }))} className="field" />
+            <DatePicker id="bf-to" value={filters.to ?? ''} min={filters.from} onChange={(v) => setFilters((f) => ({ ...f, to: v || undefined }))} />
           </div>
           <div>
             <span className="label">{t('lab.filterDepartment')}</span>

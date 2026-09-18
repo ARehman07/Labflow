@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, KeyRound, Trash2 } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { formatPkr } from '@/lib/utils';
 import { FEATURE_GROUPS } from '@/core/features/catalog';
-import type { AccessLevel } from '@/core/billing/access';
+import { paymentPeriod, type AccessLevel } from '@/core/billing/access';
+import { DatePicker } from '@/components/ui/DatePicker';
 import {
   recordLabPaymentAction, removeLabAction, resetLabUserPasswordAction, setAccessOverrideAction,
   setLabActiveAction, setLabUserActiveAction, setLockedFeaturesAction, updatePlanAction,
@@ -72,7 +73,23 @@ export function LabDetail({ lab }: { lab: LabData }) {
   };
 
   const [plan, setPlan] = useState({ ...lab.plan, maxUsers: lab.plan.maxUsers == null ? '' : String(lab.plan.maxUsers) });
-  const [pay, setPay] = useState({ amount: lab.plan.monthlyFee > 0 ? String(lab.plan.monthlyFee) : '', months: '1', method: '', reference: '', note: '' });
+  // A payment covers the days picked here. The suggestion is the month after
+  // the current paid-until (or from today, if that has passed); the admin can
+  // change either end — say, to log September after setting 30 Sept by hand.
+  const suggestPeriod = () => {
+    const p = paymentPeriod(lab.plan.paidUntil ? localDay(lab.plan.paidUntil) : null, 1);
+    return { from: isoDay(p.from), until: isoDay(p.to) };
+  };
+  const [pay, setPay] = useState({
+    amount: lab.plan.monthlyFee > 0 ? String(lab.plan.monthlyFee) : '', ...suggestPeriod(), untilTouched: false,
+    method: '', reference: '', note: '',
+  });
+  // Once a payment moves paid-until, the next suggestion follows it.
+  useEffect(() => {
+    setPay((p) => ({ ...p, ...suggestPeriod(), untilTouched: false }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lab.plan.paidUntil]);
+  const newPaidUntil = pay.until && (!lab.plan.paidUntil || pay.until > lab.plan.paidUntil) ? pay.until : lab.plan.paidUntil;
   const [override, setOverride] = useState({ mode: lab.plan.accessOverride, until: lab.plan.overrideUntil });
   const [locked, setLocked] = useState<string[]>(lab.locked);
   const [reset, setReset] = useState<{ username: string; password: string } | null>(null);
@@ -125,7 +142,7 @@ export function LabDetail({ lab }: { lab: LabData }) {
           <label><span className="label">Monthly fee (Rs)</span><input type="number" min={0} value={plan.monthlyFee} onChange={(e) => setPlan({ ...plan, monthlyFee: Number(e.target.value) || 0 })} className="field tabular-nums" /></label>
           <label><span className="label">Grace days</span><input type="number" min={0} max={60} value={plan.graceDays} onChange={(e) => setPlan({ ...plan, graceDays: Number(e.target.value) || 0 })} className="field tabular-nums" /></label>
           <label><span className="label">Staff limit</span><input type="number" min={1} value={plan.maxUsers} onChange={(e) => setPlan({ ...plan, maxUsers: e.target.value })} placeholder="No limit" className="field tabular-nums" /></label>
-          <label className="sm:col-span-2"><span className="label">Paid until</span><input type="date" value={plan.paidUntil} onChange={(e) => setPlan({ ...plan, paidUntil: e.target.value })} className="field" /></label>
+          <div className="sm:col-span-2"><span className="label">Paid until</span><DatePicker value={plan.paidUntil} onChange={(v) => setPlan({ ...plan, paidUntil: v })} placeholder="Not billed" /></div>
         </div>
         <div className="mt-3 flex justify-end">
           <button type="button" disabled={pending} onClick={() => run(() => updatePlanAction(lab.id, plan), 'Plan saved.')} className={primary}>Save plan</button>
@@ -133,15 +150,40 @@ export function LabDetail({ lab }: { lab: LabData }) {
 
         <div className="mt-5 border-t border-line pt-4">
           <h3 className="text-sm font-semibold text-strong">Record a payment</h3>
-          <p className="text-xs text-subtle">Moves “Paid until” on by the months paid — from the current date if the lab is still paid up, otherwise from today.</p>
-          <div className="mt-2 grid gap-3 sm:grid-cols-5">
+          <p className="text-xs text-subtle">Pick the days this payment covers. “Paid until” moves to the last of them — never back.</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
             <label><span className="label">Amount (Rs)</span><input type="number" min={0} value={pay.amount} onChange={(e) => setPay({ ...pay, amount: e.target.value })} className="field tabular-nums" /></label>
-            <label><span className="label">Months</span><input type="number" min={1} max={24} value={pay.months} onChange={(e) => setPay({ ...pay, months: e.target.value })} className="field tabular-nums" /></label>
+            <div>
+              <span className="label">From</span>
+              <DatePicker
+                value={pay.from}
+                clearable={false}
+                onChange={(v) => v && setPay((p) => ({ ...p, from: v, until: p.untilTouched && p.until >= v ? p.until : monthOn(v) }))}
+              />
+            </div>
+            <div>
+              <span className="label">Until</span>
+              <DatePicker
+                value={pay.until}
+                min={pay.from}
+                clearable={false}
+                onChange={(v) => v && setPay((p) => ({ ...p, until: v, untilTouched: true }))}
+              />
+            </div>
             <label><span className="label">Method</span><input value={pay.method} onChange={(e) => setPay({ ...pay, method: e.target.value })} maxLength={40} placeholder="Bank transfer" className="field" /></label>
             <label className="sm:col-span-2"><span className="label">Reference</span><input value={pay.reference} onChange={(e) => setPay({ ...pay, reference: e.target.value })} maxLength={80} placeholder="Transaction ID" className="field" /></label>
           </div>
+          <p className="mt-3 text-sm text-body">
+            Covers <b className="font-semibold">{longDay(pay.from)} – {longDay(pay.until)}</b>
+            {' · '}
+            {newPaidUntil !== lab.plan.paidUntil
+              ? <>“Paid until” becomes <b className="font-semibold">{longDay(newPaidUntil)}</b></>
+              : <>“Paid until” stays <b className="font-semibold">{longDay(lab.plan.paidUntil)}</b></>}
+          </p>
           <div className="mt-3 flex justify-end">
-            <button type="button" disabled={pending || !(Number(pay.amount) > 0)} onClick={() => run(() => recordLabPaymentAction(lab.id, pay), 'Payment recorded.')} className={primary}>Record payment</button>
+            <button type="button" disabled={pending || !(Number(pay.amount) > 0)} onClick={() => run(() => recordLabPaymentAction(lab.id, {
+              amount: pay.amount, from: pay.from, until: pay.until, method: pay.method, reference: pay.reference, note: pay.note,
+            }), 'Payment recorded.')} className={primary}>Record payment</button>
           </div>
         </div>
 
@@ -182,7 +224,7 @@ export function LabDetail({ lab }: { lab: LabData }) {
             </label>
           ))}
           {override.mode === 'ACTIVE' && (
-            <label className="block max-w-xs"><span className="label">Keep open until (optional)</span><input type="date" value={override.until} onChange={(e) => setOverride({ ...override, until: e.target.value })} className="field" /></label>
+            <div className="block max-w-xs"><span className="label">Keep open until (optional)</span><DatePicker value={override.until} onChange={(v) => setOverride({ ...override, until: v })} placeholder="No end date" /></div>
           )}
         </div>
         <div className="mt-3 flex justify-end">
@@ -298,3 +340,16 @@ export function LabDetail({ lab }: { lab: LabData }) {
     </div>
   );
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+/** `YYYY-MM-DD` as a local date, and back — dates here are days, not instants. */
+const localDay = (s: string) => new Date(`${s}T00:00:00`);
+const isoDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+/** A month on from a day, less one: 1 Sept → 30 Sept, 15 Sept → 14 Oct. */
+const monthOn = (s: string) => {
+  const d = localDay(s);
+  // Clamp to the next month's length, so 31 Jan runs to the end of February, not into March.
+  const last = new Date(d.getFullYear(), d.getMonth() + 2, 0).getDate();
+  return isoDay(new Date(d.getFullYear(), d.getMonth() + 1, Math.min(d.getDate(), last) - 1));
+};
+const longDay = (s: string) => (s ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(localDay(s)) : '—');

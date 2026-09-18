@@ -83,6 +83,7 @@ export async function getCardPolicyAction(): Promise<{
   fee: number;
   discountPct: number;
   discountOnIssue: boolean;
+  memberCap: number;
 }> {
   await requirePermission('visit.create');
   return familyCardService.policy();
