@@ -5,8 +5,9 @@ import { requirePermission, currentUser, can } from '@/core/rbac/guard';
 import { antibioticsService } from '@/modules/antibiotics/antibiotics.service';
 import { LAB_BOARD_DAYS } from '@/modules/queue/queue.service';
 import { labService } from './lab.service';
-import { messagesService } from '@/modules/messages/messages.service';
-import { tenantDb } from '@/core/db/context';
+import { tellPatientWhenReleasable } from './report-ready';
+import { reportHold, reportHolds } from '@/modules/billing/report-hold';
+import { tenantDb, currentTenantId } from '@/core/db/context';
 import { pickRange, ageInDays, type AgeUnit, type ReferenceRangeDef } from './calc-engine';
 import { advanceSchema, saveResultsSchema } from './lab.schema';
 import { canEnterResults, type OrderLineStatus } from './workflow';
@@ -591,13 +592,16 @@ export async function approveManyAction(
   return { approved, failed };
 }
 
-/** Once a slip's last test is released the patient can be told — if the lab has that message on. */
+/**
+ * Once a slip's last test is released the patient can be told — if the lab
+ * has that message on, and the bill does not hold the report back (then it
+ * goes when the bill is paid).
+ */
 async function tellPatientIfReady(orderLineIds: string[], userId: string) {
   const db = await tenantDb();
   const lines = await db.orderLine.findMany({ where: { id: { in: orderLineIds } }, select: { visitId: true } });
   for (const visitId of [...new Set(lines.map((l) => l.visitId))]) {
-    const open = await db.orderLine.count({ where: { visitId, status: { notIn: ['APPROVED', 'PRINTED', 'DELIVERED', 'CANCELLED'] } } });
-    if (open === 0) await messagesService.notify('REPORT_READY', visitId, {}, userId);
+    await tellPatientWhenReleasable(visitId, userId);
   }
 }
 
@@ -811,6 +815,9 @@ export interface ReadyReportDTO {
   tests: string[];
   printed: boolean;
   bookedAt: string;
+  /** Money still due, when the lab holds reports until paid; the report cannot go until it is 0. */
+  heldDue: number;
+  invoiceId: string | null;
 }
 
 export interface ReadyReportsDTO {
@@ -826,6 +833,7 @@ export async function getReadyReportsAction(): Promise<ReadyReportsDTO> {
     labService.readyToHandOver(user.branchId),
     labService.readyToHandOverTotal(user.branchId),
   ]);
+  const holds = await reportHolds(visits.map((v) => v.id), await currentTenantId());
   const rows = visits.map((v) => ({
     visitId: v.id,
     slipNo: v.slipNo,
@@ -835,6 +843,40 @@ export async function getReadyReportsAction(): Promise<ReadyReportsDTO> {
     tests: v.orderLines.filter((l) => l.status !== 'CANCELLED').map((l) => l.test.name),
     printed: v.orderLines.some((l) => l.status === 'PRINTED'),
     bookedAt: v.bookedAt.toISOString(),
+    heldDue: holds.get(v.id)?.held ? holds.get(v.id)!.due : 0,
+    invoiceId: holds.get(v.id)?.invoiceId ?? null,
   }));
   return { rows, total };
+}
+
+/**
+ * Let a report out although its bill is not paid: an emergency, or a patient
+ * the owner vouches for. Needs its own permission (Owner and Admin by
+ * default), and a reason, which is kept on the slip and in the audit log.
+ * The money stays due in Billing; only the hold on the report is lifted.
+ */
+export async function releaseUnpaidReportAction(visitId: string, reason: string): Promise<ActionResult> {
+  const user = await requirePermission('report.releaseUnpaid');
+  const why = String(reason ?? '').trim().slice(0, 300);
+  if (why.length < 5) return { ok: false, error: 'Write why this report is going out before it is paid.' };
+  try {
+    const tenantId = await currentTenantId();
+    const hold = await reportHold(visitId, tenantId);
+    if (!hold.held) return { ok: true };
+    const db = await tenantDb();
+    await db.visit.update({
+      where: { id: visitId },
+      data: { releasedUnpaidAt: new Date(), releasedUnpaidById: user.id, releasedUnpaidReason: why },
+    });
+    await db.auditLog.create({
+      data: {
+        tenantId, actorId: user.id, entity: 'Visit', entityId: visitId, action: 'RELEASE_UNPAID',
+        after: JSON.stringify({ due: hold.due, reason: why }),
+      },
+    });
+    await tellPatientWhenReleasable(visitId, user.id);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'The report could not be released.' };
+  }
 }

@@ -4,6 +4,7 @@ import { requirePermission, can } from '@/core/rbac/guard';
 import { billingService } from './billing.service';
 import { tenantDb } from '@/core/db/context';
 import { messagesService } from '@/modules/messages/messages.service';
+import { tellPatientWhenReleasable } from '@/modules/lab/report-ready';
 import { money } from '@/modules/messages/templates';
 import { recordPaymentSchema, refundSchema, reversePaymentSchema } from './billing.schema';
 
@@ -141,6 +142,11 @@ export async function recordPaymentAction(input: unknown): Promise<BillingAction
   try {
     const res = await billingService.recordPayment(parsed.data, user.id);
     await tellPatient('payment', res.txId, user.id);
+    // A report held for this bill may go now: its "report ready" goes with it.
+    if (res.status === 'PAID') {
+      const inv = await (await tenantDb()).invoice.findUnique({ where: { id: parsed.data.invoiceId }, select: { visitId: true } });
+      if (inv) await tellPatientWhenReleasable(inv.visitId, user.id).catch(() => {});
+    }
     return { ok: true, status: res.status, paid: res.paid, txId: res.txId };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Payment failed' };

@@ -19,7 +19,7 @@ export const FEATURE_KEYS = [
   // Lab
   'lab.queue', 'lab.retake', 'lab.sendOut', 'lab.critical', 'lab.notifiable', 'lab.qc', 'lab.stock', 'lab.analyzers', 'lab.ai',
   // Money
-  'money.referrals',
+  'money.referrals', 'money.holdUnpaidReports',
   // Patients
   'patients.documents', 'patients.portal',
 ] as const;

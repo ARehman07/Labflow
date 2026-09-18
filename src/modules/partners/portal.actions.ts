@@ -9,6 +9,7 @@ import { receptionService, BookingEditError } from '@/modules/reception/receptio
 import type { ReportData } from '@/modules/reporting/report.types';
 import { partnersService } from './partners.service';
 import { notifyStaff } from '@/modules/notifications/notify';
+import { reportHold, reportHolds } from '@/modules/billing/report-hold';
 
 const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'];
 
@@ -40,6 +41,8 @@ export interface PortalVisitDTO {
   released: boolean;
   allReleased: boolean;
   net: number;
+  /** Rupees still due when the lab holds this report until paid; it cannot be opened until then. */
+  heldDue: number;
 }
 
 // ── Partner lab portal ──
@@ -54,6 +57,7 @@ export async function partnerHomeAction(): Promise<{
   const user = await partnerUser();
   const detail = await partnersService.detail(user.partnerLabId);
   if (!detail) throw new Error('Partner lab not found.');
+  const holds = await reportHolds(detail.visits.map((v) => v.id), await currentTenantId());
   return {
     labName: await labName(),
     partnerName: detail.name,
@@ -64,6 +68,7 @@ export async function partnerHomeAction(): Promise<{
       tests: v.tests, released: v.released,
       allReleased: v.tests.length > 0 && v.tests.every((x) => RELEASED.includes(x.status)),
       net: v.net,
+      heldDue: holds.get(v.id)?.held ? holds.get(v.id)!.due : 0,
     })),
   };
 }
@@ -79,6 +84,7 @@ export async function partnerReportAction(visitId: string): Promise<ReportData |
   const user = await partnerUser();
   const visit = await (await tenantDb()).visit.findUnique({ where: { id: visitId }, select: { partnerLabId: true } });
   if (!visit || visit.partnerLabId !== user.partnerLabId) return null;
+  if ((await reportHold(visitId, await currentTenantId())).held) return null;
   return getReportData(visitId);
 }
 
@@ -152,6 +158,7 @@ export async function doctorHomeAction(): Promise<{
     }),
     db.commission.findMany({ where: { doctorId: user.doctorId }, select: { amount: true, status: true } }),
   ]);
+  const holds = await reportHolds(visits.map((v) => v.id), await currentTenantId());
   return {
     labName: await labName(),
     doctorName: doctor?.name ?? '',
@@ -167,6 +174,7 @@ export async function doctorHomeAction(): Promise<{
         released: tests.some((x) => RELEASED.includes(x.status)),
         allReleased: tests.length > 0 && tests.every((x) => RELEASED.includes(x.status)),
         net: v.invoice ? Number(v.invoice.netAmount) : 0,
+        heldDue: holds.get(v.id)?.held ? holds.get(v.id)!.due : 0,
       };
     }),
   };
@@ -176,5 +184,6 @@ export async function doctorReportAction(visitId: string): Promise<ReportData | 
   const user = await doctorUser();
   const visit = await (await tenantDb()).visit.findUnique({ where: { id: visitId }, select: { doctorId: true } });
   if (!visit || visit.doctorId !== user.doctorId) return null;
+  if ((await reportHold(visitId, await currentTenantId())).held) return null;
   return getReportData(visitId);
 }

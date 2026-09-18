@@ -713,6 +713,12 @@ model Visit {
   rateGroup         RateGroup?       @relation(fields: [rateGroupId], references: [id], onDelete: SetNull)
   collectionPointId String?
   collectionPoint   CollectionPoint? @relation(fields: [collectionPointId], references: [id], onDelete: SetNull)
+  /// A report let out with money still due: when, by whom, and why. Set by
+  /// someone holding report.releaseUnpaid; from then on the lab's "hold
+  /// reports until paid" rule no longer holds this slip's report.
+  releasedUnpaidAt     DateTime?
+  releasedUnpaidById   String?
+  releasedUnpaidReason String?
 
   orderLines    OrderLine[]
   samples       Sample[]

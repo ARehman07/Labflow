@@ -7,6 +7,7 @@ import { sendSms, smsConfigured } from '@/lib/messaging';
 // is NOT unique across labs — two tenants can hold the same number, and
 // resolving without a tenant would show one lab's reports to another's patient.
 import { unscopedPrisma as prisma } from '@/core/db/tenant';
+import { reportHold, reportHolds } from '@/modules/billing/report-hold';
 import type { ReportData } from '@/modules/reporting/report.types';
 
 const RELEASED = ['APPROVED', 'PRINTED', 'DELIVERED'] as const;
@@ -38,6 +39,8 @@ export interface PortalReportSummary {
   slipNo: string;
   date: string;
   tests: string[];
+  /** Rupees still due when the lab holds this report until paid; it cannot be opened until then. */
+  heldDue: number;
 }
 
 function fmtDate(d: Date) {
@@ -224,11 +227,13 @@ export const portalService = {
       take: 30,
     });
 
+    const holds = await reportHolds(visits.map((v) => v.id), session.tenantId);
     return visits.map((v) => ({
       visitId: v.id,
       slipNo: v.slipNo,
       date: fmtDate(v.bookedAt),
       tests: v.orderLines.map((l) => l.test.name),
+      heldDue: holds.get(v.id)?.held ? holds.get(v.id)!.due : 0,
     }));
   },
 
@@ -243,6 +248,8 @@ export const portalService = {
     // Ownership AND tenancy: the same mobile can exist in another lab.
     if (!visit || visit.tenantId !== session.tenantId) return null;
     if (visit.patient.mobile !== session.mobile) return null;
+    // Held until the bill is paid (see billing/report-hold).
+    if ((await reportHold(visitId, session.tenantId)).held) return null;
 
     // Imported lazily: the reporting module reaches auth, and the portal must
     // stay loadable without a session.

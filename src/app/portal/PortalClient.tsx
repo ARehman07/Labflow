@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useI18n } from '@/core/i18n/I18nProvider';
-import { ArrowLeft, ArrowRight, FileDown, FileText, History } from 'lucide-react';
+import { ArrowLeft, ArrowRight, FileDown, FileText, History, Lock } from 'lucide-react';
 import { exportReport, reportFileName } from '@/lib/report-export';
 import { Button } from '@/components/ui/Button';
 import { AuthShell } from '@/components/layout/AuthShell';
@@ -76,7 +76,7 @@ export function PortalClient() {
       setStep('LIST');
       // The booking they scanned, when it is ready and theirs.
       const scanned = fromSlip ? list.find((r) => r.slipNo === fromSlip) : undefined;
-      if (scanned) {
+      if (scanned && scanned.heldDue === 0) {
         const data = await getPortalReportAction(res.token, scanned.visitId);
         if (data) { setReport(data); setStep('REPORT'); }
       }
@@ -205,6 +205,19 @@ export function PortalClient() {
               <ul className="stagger space-y-2">
                 {reports.map((r) => (
                   <li key={r.visitId}>
+                    {r.heldDue > 0 ? (
+                      // Ready, but held until the bill is paid at the lab: say so plainly.
+                      <div className="flex w-full items-center justify-between gap-3 rounded-xl border border-warn-text/30 bg-warn-soft/40 p-3">
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold text-body">{r.tests.join(', ')}</span>
+                          <span className="block text-xs text-muted">{t('billing.slip')} {r.slipNo} · {r.date}</span>
+                          <span className="mt-1 block text-xs font-semibold text-warn-text">
+                            {t('portal.heldLine').replace('{amount}', `Rs ${r.heldDue.toLocaleString('en-PK')}`)}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-warn-text"><Lock className="h-5 w-5" /></span>
+                      </div>
+                    ) : (
                     <button
                       onClick={() => openReport(r.visitId)}
                       className="flex w-full items-center justify-between gap-3 rounded-xl border border-line p-3 text-start transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-card-hover"
@@ -215,6 +228,7 @@ export function PortalClient() {
                       </span>
                       <span className="shrink-0 text-brand-600"><FileText className="h-5 w-5" /></span>
                     </button>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -6,6 +6,7 @@ import { getReportData } from '@/modules/reporting/reporting.service';
 import { AccessDenied } from '@/components/ui/AccessDenied';
 import { StaffReport } from './StaffReport';
 import { messagesService } from '@/modules/messages/messages.service';
+import { reportHold } from '@/modules/billing/report-hold';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,7 @@ export default async function StaffReportPage({ params }: { params: { visitId: s
     db.visit.findUnique({ where: { id: params.visitId }, select: { patient: { select: { email: true } } } }),
   ]);
   const wa = await messagesService.template('WHATSAPP_REPORT');
+  const hold = await reportHold(params.visitId, await currentTenantId());
   const h = headers();
   const host = h.get('x-forwarded-host') ?? h.get('host') ?? '';
   const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
@@ -41,6 +43,13 @@ export default async function StaffReportPage({ params }: { params: { visitId: s
       printed={active.some((l) => l.status === 'PRINTED' || l.status === 'DELIVERED')}
       waTemplate={wa.custom ? wa.body : null}
       patientEmail={visit?.patient.email ?? null}
+      hold={{
+        held: hold.held,
+        due: hold.due,
+        invoiceId: hold.invoiceId,
+        releasedReason: hold.due > 0 && hold.releasedUnpaid ? (hold.releasedUnpaid.reason ?? '') : null,
+      }}
+      canReleaseUnpaid={await can('report.releaseUnpaid')}
     />
   );
 }

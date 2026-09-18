@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { FileText, Search } from 'lucide-react';
+import { FileText, Lock, Search } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -55,7 +55,12 @@ export function VisitsTable({ visits, reportBase }: { visits: PortalVisitDTO[]; 
                   </div>
                 </td>
                 <td className="px-4 py-2.5 text-end">
-                  {v.released ? (
+                  {v.released && v.heldDue > 0 ? (
+                    // Held until the slip is paid: say so, and how much, rather than a dead link.
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-semibold text-warn-text" title={t('portal.heldTitle')}>
+                      <Lock className="h-3.5 w-3.5" /> {t('portal.heldDue').replace('{amount}', `Rs ${v.heldDue.toLocaleString('en-PK')}`)}
+                    </span>
+                  ) : v.released ? (
                     <Link href={`${reportBase}/${v.id}`} className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold text-brand-700 hover:underline dark:text-brand-300">
                       <FileText className="h-4 w-4" /> {v.allReleased ? t('portal.b2b.report') : t('portal.b2b.partReport')}
                     </Link>

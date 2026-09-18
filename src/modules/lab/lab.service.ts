@@ -2,6 +2,7 @@ import { getFeatures } from '@/core/features/features.server';
 import { randomBytes } from 'crypto';
 import { tenantDb, currentTenantId } from '@/core/db/context';
 import { labPolicy } from '@/core/db/lab-policy';
+import { reportHold, heldMessage } from '@/modules/billing/report-hold';
 import { analyteKey, historyCutoff } from '@/modules/reporting/history';
 import { openCriticalNotifications } from './critical';
 import type { TenantTransactionClient } from '@/core/db/tenant';
@@ -278,6 +279,9 @@ export const labService = {
    * how it went out.
    */
   async releaseVisit(visitId: string, to: 'PRINTED' | 'DELIVERED', actorId: string, channel?: 'PRINT' | 'WHATSAPP' | 'PORTAL' | 'EMAIL' | 'SMS') {
+    // A report with money due does not leave the lab (see billing/report-hold).
+    const hold = await reportHold(visitId, await currentTenantId());
+    if (hold.held) throw new Error(heldMessage(hold.due));
     const db = await tenantDb();
     const from = to === 'PRINTED' ? ['APPROVED'] : ['APPROVED', 'PRINTED'];
     const lines = await db.orderLine.findMany({

@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { FileText, HandHeart, MessageCircle, PackageCheck, Phone } from 'lucide-react';
+import { FileText, HandHeart, MessageCircle, PackageCheck, Phone, Lock, Wallet } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Badge } from '@/components/ui/Badge';
 import { Button, buttonVariants } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { formatPkr } from '@/lib/utils';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/components/ui/Toast';
 import { whatsappLink } from '@/lib/whatsapp';
@@ -84,6 +85,9 @@ export function ReadyClient({
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-strong">{it.patientName}</span>
                     {it.printed && <Badge tone="info" size="sm">{t('report.printed')}</Badge>}
+                    {it.heldDue > 0 && (
+                      <Badge tone="warning" size="sm"><Lock className="h-3 w-3" /> {t('hold.dueBadge').replace('{amount}', formatPkr(it.heldDue))}</Badge>
+                    )}
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted">
                     <span className="font-mono">{it.mrNo}</span>
@@ -100,16 +104,25 @@ export function ReadyClient({
                   <Link href={`/lab/report/${it.visitId}`} className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
                     <FileText className="h-4 w-4" /> {t('patient.report')}
                   </Link>
-                  {it.mobile && (
-                    <Button variant="outline" size="sm" onClick={() => deliver(it, 'WHATSAPP')}
-                      loading={busy === `${it.visitId}:WHATSAPP`} disabled={busy !== null}>
-                      <MessageCircle className="h-4 w-4" /> {t('report.whatsapp')}
+                  {it.heldDue > 0 ? (
+                    // Held until paid: the way forward is Billing, not the hand-over.
+                    it.invoiceId && (
+                      <Link href={`/billing?invoice=${it.invoiceId}`} className={buttonVariants({ size: 'sm' })}>
+                        <Wallet className="h-4 w-4" /> {t('hold.collect')}
+                      </Link>
+                    )
+                  ) : (<>
+                    {it.mobile && (
+                      <Button variant="outline" size="sm" onClick={() => deliver(it, 'WHATSAPP')}
+                        loading={busy === `${it.visitId}:WHATSAPP`} disabled={busy !== null}>
+                        <MessageCircle className="h-4 w-4" /> {t('report.whatsapp')}
+                      </Button>
+                    )}
+                    <Button size="sm" onClick={() => deliver(it, 'PRINT')}
+                      loading={busy === `${it.visitId}:PRINT`} disabled={busy !== null}>
+                      <HandHeart className="h-4 w-4" /> {t('report.markHanded')}
                     </Button>
-                  )}
-                  <Button size="sm" onClick={() => deliver(it, 'PRINT')}
-                    loading={busy === `${it.visitId}:PRINT`} disabled={busy !== null}>
-                    <HandHeart className="h-4 w-4" /> {t('report.markHanded')}
-                  </Button>
+                  </>)}
                 </div>
               </Card>
             </li>

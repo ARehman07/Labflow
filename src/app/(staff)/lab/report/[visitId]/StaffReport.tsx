@@ -4,22 +4,23 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Check, CheckCircle2, FileDown, HandHeart, History, ImageDown, Loader2, Mail, MessageCircle,
-  MessageSquare, MoreHorizontal, Printer, Send, Sparkles, Stamp, type LucideIcon,
+  Lock, MessageSquare, MoreHorizontal, Printer, Send, Sparkles, Stamp, Unlock, Wallet, type LucideIcon,
 } from 'lucide-react';
+import Link from 'next/link';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { Button, buttonVariants } from '@/components/ui/Button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useToast } from '@/components/ui/Toast';
 import { ReportDocument } from '@/components/report/ReportDocument';
-import { cn } from '@/lib/utils';
+import { cn, formatPkr } from '@/lib/utils';
 import { whatsappLink } from '@/lib/whatsapp';
 import { renderTemplate } from '@/modules/messages/templates';
 import { exportReport, reportFileName, reportPdfBase64 } from '@/lib/report-export';
 import { printElement } from '@/lib/print-isolated';
 import { emailReportAction, integrationsStatusAction, smsReportAction } from '@/modules/delivery/delivery.actions';
 import { aiInterpretReportAction } from '@/modules/ai/ai.actions';
-import { markReportDeliveredAction, markReportPrintedAction } from '@/modules/lab/lab.actions';
+import { markReportDeliveredAction, markReportPrintedAction, releaseUnpaidReportAction } from '@/modules/lab/lab.actions';
 import type { ReportData } from '@/modules/reporting/report.types';
 
 const PREF_HISTORY = 'labflow.report.history';
@@ -41,7 +42,7 @@ const PREF_LETTERHEAD = 'labflow.report.letterhead';
  * More. Both print choices are remembered on this computer.
  */
 export function StaffReport({
-  visitId, data, canRelease, labName, portalLink, delivered, printed, waTemplate, patientEmail,
+  visitId, data, canRelease, labName, portalLink, delivered, printed, waTemplate, patientEmail, hold, canReleaseUnpaid,
 }: {
   visitId: string;
   data: ReportData;
@@ -54,6 +55,10 @@ export function StaffReport({
   waTemplate: string | null;
   /** Shown under Email, so a missing address is seen before the click, not after. */
   patientEmail: string | null;
+  /** Money due on the slip, when the lab holds reports until paid (billing/report-hold). */
+  hold: { held: boolean; due: number; invoiceId: string | null; releasedReason: string | null };
+  /** May let a held report out anyway, with a reason. */
+  canReleaseUnpaid: boolean;
 }) {
   const { t } = useI18n();
   const toast = useToast();
@@ -111,8 +116,24 @@ export function StaffReport({
   }, []);
   const remember = (key: string, on: boolean) => { try { localStorage.setItem(key, on ? '1' : '0'); } catch { /* storage blocked */ } };
 
+  // While the bill holds the report, nothing lets it out: print, save or send.
+  const held = hold.held;
+  const [releasing, setReleasing] = useState(false);
+  const [releaseWhy, setReleaseWhy] = useState('');
+  async function releaseUnpaid() {
+    setBusy('RELEASE');
+    const res = await releaseUnpaidReportAction(visitId, releaseWhy);
+    setBusy(null);
+    if (res.ok) { toast('success', t('hold.released')); setReleasing(false); router.refresh(); }
+    else toast('error', res.error);
+  }
+
   async function print() {
-    if (canRelease && !printed) await markReportPrintedAction(visitId);
+    if (held) return;
+    if (canRelease && !printed) {
+      const res = await markReportPrintedAction(visitId);
+      if (!res.ok) { toast('error', res.error ?? t('hold.blocked')); return; }
+    }
     await printElement(sheet.current?.querySelector('.report-sheet'));
     router.refresh();
   }
@@ -174,7 +195,7 @@ export function StaffReport({
                 <History className="h-3.5 w-3.5" /> {t('report.withHistory')}
               </Toggle>
 
-              <Button variant={delivered ? 'outline' : 'primary'} onClick={print}>
+              <Button variant={delivered ? 'outline' : 'primary'} onClick={print} disabled={held} title={held ? t('hold.blocked') : undefined}>
                 <Printer className="h-4 w-4" /> {t('report.print')}
               </Button>
 
@@ -183,6 +204,8 @@ export function StaffReport({
                 icon={<Send className="h-4 w-4" />}
                 loading={sending}
                 title={t('report.sendTitle')}
+                disabled={held}
+                hint={held ? t('hold.blocked') : undefined}
               >
                 {(close) => (<>
                   <Row
@@ -239,13 +262,15 @@ export function StaffReport({
                   <Row
                     icon={FileDown}
                     label={t('report.downloadPdf')}
-                    sub={t('report.pdfSub')}
+                    sub={held ? t('hold.blockedShort') : t('report.pdfSub')}
+                    disabled={held}
                     onClick={() => { close(); void save('pdf'); }}
                   />
                   <Row
                     icon={ImageDown}
                     label={t('report.downloadPng')}
-                    sub={t('report.pngSub')}
+                    sub={held ? t('hold.blockedShort') : t('report.pngSub')}
+                    disabled={held}
                     onClick={() => { close(); void save('png'); }}
                   />
                   <hr className="my-1.5 border-line" />
@@ -263,7 +288,54 @@ export function StaffReport({
         />
       </div>
 
-      <div ref={sheet} className="mt-3">
+      {held && (
+        // Why the report cannot go out, what is owed, and the way through.
+        <div className="no-print mt-3 rounded-xl border border-warn-text/30 bg-warn-soft px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Lock className="h-5 w-5 shrink-0 text-warn-text" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-warn-text">
+                {t('hold.title').replace('{amount}', formatPkr(hold.due))}
+              </p>
+              <p className="text-xs text-warn-text/80">{t('hold.body')}</p>
+            </div>
+            {hold.invoiceId && (
+              <Link href={`/billing?invoice=${hold.invoiceId}`} className={buttonVariants({ size: 'sm' })}>
+                <Wallet className="h-4 w-4" /> {t('hold.collect')}
+              </Link>
+            )}
+            {canReleaseUnpaid && !releasing && (
+              <Button size="sm" variant="ghost" onClick={() => setReleasing(true)}>{t('hold.releaseAnyway')}</Button>
+            )}
+          </div>
+          {canReleaseUnpaid && releasing && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-warn-text/20 pt-3">
+              <input
+                autoFocus
+                value={releaseWhy}
+                onChange={(e) => setReleaseWhy(e.target.value)}
+                maxLength={300}
+                placeholder={t('hold.reasonPh')}
+                aria-label={t('hold.reason')}
+                className="field min-w-0 flex-1"
+              />
+              <Button size="sm" variant="ghost" onClick={() => { setReleasing(false); setReleaseWhy(''); }}>{t('common.cancel')}</Button>
+              <Button size="sm" onClick={releaseUnpaid} loading={busy === 'RELEASE'} disabled={releaseWhy.trim().length < 5}>
+                {t('hold.releaseConfirm')}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {!held && hold.releasedReason != null && (
+        <p className="no-print mt-3 flex items-center gap-2 rounded-xl bg-surface-2 px-4 py-2 text-xs text-muted">
+          <Unlock className="h-3.5 w-3.5 shrink-0" />
+          {t('hold.releasedNote').replace('{amount}', formatPkr(hold.due)).replace('{reason}', hold.releasedReason || '—')}
+        </p>
+      )}
+
+      {/* Held: the sheet can be read on screen but not printed, even with the browser's own Ctrl+P. */}
+      <div ref={sheet} className={cn('mt-3', held && 'print:hidden')}>
         {ready ? (
           <ReportDocument data={data} showActions={false} withHistory={withHistory} letterhead={letterhead} />
         ) : (
@@ -298,7 +370,7 @@ export function StaffReport({
  * closes on a click outside, on Escape, or on choosing something.
  */
 function Menu({
-  label, icon, children, variant = 'outline', iconOnly = false, loading = false, title,
+  label, icon, children, variant = 'outline', iconOnly = false, loading = false, title, disabled = false, hint,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -308,6 +380,9 @@ function Menu({
   loading?: boolean;
   /** A heading inside the panel, when the panel needs one. */
   title?: string;
+  disabled?: boolean;
+  /** Said on hover — why it is disabled, when it is. */
+  hint?: string;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -331,10 +406,11 @@ function Menu({
         variant={variant}
         onClick={() => setOpen((o) => !o)}
         loading={loading}
+        disabled={disabled}
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={iconOnly ? label : undefined}
-        title={iconOnly ? label : undefined}
+        title={hint ?? (iconOnly ? label : undefined)}
       >
         {icon}{!iconOnly && label}
       </Button>

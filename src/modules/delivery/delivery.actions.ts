@@ -7,6 +7,7 @@ import { emailConfigured, smsConfigured } from '@/lib/messaging';
 import { messagesService } from '@/modules/messages/messages.service';
 import { renderTemplate } from '@/modules/messages/templates';
 import { aiConfigured } from '@/modules/ai/ai.service';
+import { reportHold, heldMessage } from '@/modules/billing/report-hold';
 
 type Res = { ok: true } | { ok: false; error: string };
 
@@ -18,6 +19,12 @@ async function mayRelease() {
 export async function integrationsStatusAction(): Promise<{ email: boolean; sms: boolean; ai: boolean }> {
   await currentUser();
   return { email: emailConfigured(), sms: smsConfigured(), ai: aiConfigured() && (await featureOn('lab.ai')) };
+}
+
+/** Why a report cannot be sent yet, or null when it may go. Checked before sending, not after. */
+async function heldError(visitId: string): Promise<string | null> {
+  const hold = await reportHold(visitId, await currentTenantId());
+  return hold.held ? heldMessage(hold.due) : null;
 }
 
 async function visitContact(visitId: string) {
@@ -33,6 +40,8 @@ async function visitContact(visitId: string) {
 export async function emailReportAction(visitId: string, pdfBase64: string, portalLink: string): Promise<Res> {
   const user = await currentUser();
   if (!(await mayRelease())) return { ok: false, error: 'You cannot release reports.' };
+  const held = await heldError(visitId);
+  if (held) return { ok: false, error: held };
   if (!emailConfigured()) return { ok: false, error: 'Email is not set up. Add SMTP_HOST, SMTP_USER and SMTP_PASS to the server environment.' };
   const { visit, labName } = await visitContact(visitId);
   if (!visit) return { ok: false, error: 'Booking not found.' };
@@ -58,6 +67,8 @@ export async function emailReportAction(visitId: string, pdfBase64: string, port
 export async function smsReportAction(visitId: string, portalLink: string): Promise<Res> {
   const user = await currentUser();
   if (!(await mayRelease())) return { ok: false, error: 'You cannot release reports.' };
+  const held = await heldError(visitId);
+  if (held) return { ok: false, error: held };
   if (!smsConfigured()) return { ok: false, error: 'SMS is not set up. Add SMS_API_URL to the server environment.' };
   const { visit, labName, labCode } = await visitContact(visitId);
   if (!visit?.patient.mobile) return { ok: false, error: 'This patient has no mobile number.' };

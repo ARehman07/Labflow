@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, ArrowRight, BadgePercent, Check, CircleAlert, ClipboardList, CreditCard, FlaskConical, Keyboard, Package, Plus,
-  ReceiptText, RotateCcw, Search, StickyNote, TestTube, Trash2, UserPlus, UserRound, Wallet, type LucideIcon,
+  ArrowLeft, ArrowRight, BadgePercent, Banknote, Check, Clock, CircleAlert, ClipboardList, CreditCard, FlaskConical, Keyboard, Package, Plus,
+  ReceiptText, RotateCcw, Search, Smartphone, StickyNote, TestTube, Trash2, UserPlus, UserRound, Wallet, type LucideIcon,
 } from 'lucide-react';
 import { useI18n } from '@/core/i18n/I18nProvider';
 import { useFeatures } from '@/core/features/FeaturesProvider';
@@ -1368,39 +1368,42 @@ export function BookingClient() {
 
               {f['booking.payAtCounter'] && net > 0 && !billedToPartner && (
                 <div className="mt-4 border-t border-line pt-4">
-                  <div className="mb-2.5 flex h-9 items-center justify-between gap-3">
+                  {/* Nearly always "now", so the choice stays small, in the heading. */}
+                  <div className="mb-3 flex h-9 items-center justify-between gap-3">
                     <H className="mb-0" icon={Wallet}>{t('pay.title')}</H>
-                    <div className="w-44">
-                      <Segmented
-                        size="sm"
-                        value={payNow}
-                        onChange={setPayNow}
-                        ariaLabel={t('pay.title')}
-                        options={[{ value: 'NOW', label: t('pay.now') }, { value: 'LATER', label: t('pay.later') }]}
-                      />
+                    <div role="radiogroup" aria-label={t('pay.title')} className="grid w-60 grid-cols-2 gap-1.5">
+                      <PayTile mini selected={payNow === 'NOW'} onSelect={() => setPayNow('NOW')} icon={Banknote} title={t('pay.now')} />
+                      <PayTile mini selected={payNow === 'LATER'} onSelect={() => setPayNow('LATER')} icon={Clock} title={t('pay.later')} />
                     </div>
                   </div>
                   {payNow === 'LATER' ? (
-                    <p className="text-sm text-muted">{t('book.payLaterBody').replace('{amount}', formatPkr(net))}</p>
+                    <p className="rounded-xl bg-surface-2 px-4 py-3 text-sm text-muted">{t('book.payLaterBody').replace('{amount}', formatPkr(net))}</p>
                   ) : (<>
-                    <FormGrid>
-                      {accounts.length > 1 && (<>
-                        <FormLabel>{t('reception.account')}</FormLabel>
-                        {accounts.length <= 4 ? (
-                          <Segmented
-                            size="sm"
-                            value={accountId}
-                            onChange={setAccountId}
-                            ariaLabel={t('reception.account')}
-                            options={accounts.map((a) => ({ value: a.id, label: a.name }))}
-                          />
+                    {accounts.length > 1 && (
+                      <div>
+                        <p className="mb-2 text-sm font-medium text-body">{t('reception.account')}</p>
+                        {accounts.length <= 6 ? (
+                          <div role="radiogroup" aria-label={t('reception.account')} className={cn('grid gap-2', accounts.length === 2 || accounts.length === 4 ? 'grid-cols-2' : 'grid-cols-3')}>
+                            {accounts.map((a) => (
+                              <PayTile
+                                key={a.id}
+                                compact
+                                selected={accountId === a.id}
+                                onSelect={() => setAccountId(a.id)}
+                                icon={a.method === 'CASH' ? Banknote : a.method === 'CARD' ? CreditCard : Smartphone}
+                                title={a.name}
+                              />
+                            ))}
+                          </div>
                         ) : (
                           <Select value={accountId} onChange={setAccountId} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
                         )}
-                      </>)}
-                      <FormLabel htmlFor="pay-received">{t('pay.received')}</FormLabel>
-                      <div className="field flex items-center gap-2 py-0 ps-3.5">
-                        <span className="shrink-0 text-sm font-bold text-subtle">Rs</span>
+                      </div>
+                    )}
+                    <div className={cn(accounts.length > 1 && 'mt-4')}>
+                      <label htmlFor="pay-received" className="mb-2 block text-sm font-medium text-body">{t('pay.received')}</label>
+                      <div className="field flex h-12 items-center gap-2 py-0 ps-4">
+                        <span className="shrink-0 text-base font-bold text-subtle">Rs</span>
                         <input
                           id="pay-received"
                           type="number"
@@ -1408,10 +1411,10 @@ export function BookingClient() {
                           inputMode="decimal"
                           value={receivedTouched ? received : String(net)}
                           onChange={(e) => { setReceivedTouched(true); setReceived(e.target.value); }}
-                          className="field-inner py-2 text-base font-semibold tabular-nums"
+                          className="field-inner text-lg font-bold tabular-nums"
                         />
                       </div>
-                    </FormGrid>
+                    </div>
                     {/* "Give back Rs 215 change": the sum inside the sentence, large
                         enough to read across the counter. Always drawn, so typing
                         never moves the form. */}
@@ -1573,6 +1576,39 @@ function CardChoice({
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold text-strong">{title}</span>
         <span className={cn('block truncate text-xs font-medium', selected ? 'text-brand-700 dark:text-brand-300' : 'text-muted')}>{cost}</span>
+      </span>
+    </button>
+  );
+}
+
+/**
+ * One choice in Payment, as a tile: an icon, a name, and (when there is room)
+ * a line saying what it means. Filled and ringed when chosen.
+ */
+function PayTile({
+  selected, onSelect, icon: I, title, sub, compact, mini,
+}: { selected: boolean; onSelect: () => void; icon: LucideIcon; title: string; sub?: string; compact?: boolean; mini?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        'flex min-w-0 items-center gap-3 rounded-xl text-start ring-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+        mini ? 'h-9 gap-2 rounded-lg px-2' : compact ? 'h-12 px-3' : 'px-3.5 py-3',
+        selected
+          ? 'bg-brand-500/10 ring-2 ring-brand-500'
+          : 'bg-surface-2/60 ring-line hover:bg-surface-2 hover:ring-line-strong',
+      )}
+    >
+      <span className={cn('grid shrink-0 place-items-center rounded-md', mini ? 'h-6 w-6' : compact ? 'h-7 w-7' : 'h-9 w-9',
+        selected ? 'bg-brand-600 text-white' : 'bg-surface text-muted ring-1 ring-line')}>
+        <I className="h-4 w-4" />
+      </span>
+      <span className="min-w-0">
+        <span className={cn('block truncate text-sm font-semibold', selected ? 'text-brand-700 dark:text-brand-200' : 'text-strong')}>{title}</span>
+        {sub && <span className="block truncate text-xs text-muted">{sub}</span>}
       </span>
     </button>
   );

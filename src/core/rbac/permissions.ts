@@ -84,6 +84,10 @@ export const PERMISSIONS = {
   // ── Reporting ──
   REPORT_PRINT: { code: 'report.print', label: 'Print report', group: 'Reporting' },
   REPORT_DELIVER: { code: 'report.deliver', label: 'Deliver report', group: 'Reporting' },
+  REPORT_RELEASE_UNPAID: {
+    code: 'report.releaseUnpaid', label: 'Release reports with money due', group: 'Reporting',
+    note: 'When the lab holds reports until paid, let one out anyway, with a reason that is kept.',
+  },
   INSIGHTS_VIEW: { code: 'insights.view', label: 'View dashboards', group: 'Reporting' },
   B2B_PORTAL: {
     code: 'b2b.portal', label: 'Partner lab portal', group: 'Reporting',
